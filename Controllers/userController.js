@@ -158,7 +158,7 @@ export const googleLogin = async (req, res) => {
       return res.status(400).json({ message: "Google Token is required" });
     }
 
-    const { token, user } = await googleAuthService(googleToken);
+    const { token, user, isNewUser } = await googleAuthService(googleToken);
 
     // Set the cookie just like your standard login
     res.cookie('Token', token, {
@@ -172,7 +172,8 @@ export const googleLogin = async (req, res) => {
       success: true,
       message: "Google Login Successful",
       token,
-      user
+      user,
+      isNewUser
     });
   } catch (error) {
     console.error('Google Auth Error:', error);

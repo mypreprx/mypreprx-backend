@@ -68,7 +68,29 @@ const userSchema = new mongoose.Schema({
     default: 0
   },
   resetPasswordToken: String,
-  resetPasswordExpires: Date
+  resetPasswordExpires: Date,
+  stripeCustomerId: {
+    type: String,
+    default: null
+  },
+  subscription: {
+    stripeSubscriptionId: { type: String, default: null },
+    status: {
+      type: String,
+      enum: ['none', 'trialing', 'active', 'past_due', 'suspended', 'canceled'],
+      default: 'none'
+    },
+    planId: { type: String, default: null },
+    priceId: { type: String, default: null },
+    premium: { type: Boolean, default: false },
+    trialEndsAt: { type: Date, default: null },
+    paidThrough: { type: Date, default: null },
+    currentPeriodEnd: { type: Date, default: null },
+    graceEndsAt: { type: Date, default: null },
+    cancelAtPeriodEnd: { type: Boolean, default: false },
+    canceledAt: { type: Date, default: null },
+    suspendNotifiedAt: { type: Date, default: null }
+  }
 }, { timestamps: true });
 
 const userModel = mongoose.model('User', userSchema);

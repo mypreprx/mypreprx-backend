@@ -12,8 +12,11 @@ import { Server } from 'socket.io'; // <--- NEW: Import Socket.io
 import userRoutes from './Routes/userRoutes.js';
 import connectDB from './Config/connectionDB.js'
 import adminRoutes from './Routes/adminRoutes.js';
+import billingRoutes from './Routes/billingRoutes.js';
+import { stripeWebhookHandler } from './Controllers/billingController.js';
 import cookieParser from 'cookie-parser';
 import cors from 'cors'
+import jwt from 'jsonwebtoken';
 
 dotenv.config();
 connectDB();
@@ -51,8 +54,27 @@ const io = new Server(server, {
 app.set('io', io);
 
 // Socket.io Connection Logic
+// Join authenticated users to personal rooms for targeted notifications (e.g. billing)
+const parseCookieToken = (cookieHeader) => {
+    if (!cookieHeader) return null;
+    const match = cookieHeader.match(/(?:^|;\s*)Token=([^;]+)/);
+    return match ? decodeURIComponent(match[1]) : null;
+};
+
 io.on('connection', (socket) => {
     console.log(`User Connected: ${socket.id}`);
+
+    try {
+        const token = socket.handshake.auth?.token || parseCookieToken(socket.handshake.headers.cookie);
+        if (token && process.env.JWT_SECRET) {
+            const decoded = jwt.verify(token, process.env.JWT_SECRET);
+            if (decoded?.id) {
+                socket.join(`user_${decoded.id}`);
+            }
+        }
+    } catch {
+        // Unauthenticated socket — still allowed for existing public/study-buddy usage
+    }
 
     socket.on('disconnect', () => {
         console.log(`User Disconnected: ${socket.id}`);
@@ -63,6 +85,10 @@ io.on('connection', (socket) => {
 // 2. MIDDLEWARE
 // ==========================================
 app.use(cookieParser());
+
+// Stripe webhook MUST receive the raw body for signature verification.
+// Mounted before express.json so the body is not parsed as JSON.
+app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, './uploads')));
@@ -86,6 +112,9 @@ app.use(
 // ==========================================
 app.use('/api', userRoutes);
 app.use('/api', adminRoutes);
+app.use('/api', billingRoutes);
+// Stripe webhook (raw body via middleware above) — source of truth for subscription state
+app.post('/api/stripe/webhook', stripeWebhookHandler);
 
 // Global & Multer Error Handling Middleware
 app.use((err, req, res, next) => {

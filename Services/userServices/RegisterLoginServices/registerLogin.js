@@ -16,8 +16,10 @@ export const googleAuthService = async (googleToken) => {
 
   // 2. Check if user exists
   let user = await userModel.findOne({ email });
+  let isNewUser = false;
 
   if (!user) {
+    isNewUser = true;
     // --- NEW: Extract first name and ensure uniqueness ---
     // Use Google's given_name if available, otherwise grab the first word of the full name
     let firstName = given_name || name.split(' ')[0];
@@ -61,7 +63,7 @@ export const googleAuthService = async (googleToken) => {
   user.sessionToken = token;
   await user.save();
 
-  return { token, user };
+  return { token, user, isNewUser };
 };
 export const registerUserService = async (userData) => {
   const { username, email, password, confirmpassword, role } = userData;
