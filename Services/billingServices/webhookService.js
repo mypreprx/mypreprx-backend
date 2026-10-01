@@ -57,24 +57,54 @@ const notifyPaidActivated = async (user, io) => {
   });
 };
 
+/**
+ * Cancellation copy must reflect WHO canceled. Previously every terminal
+ * cancellation claimed "canceled by an administrator", which told users who
+ * canceled themselves from the subscription page that an admin had acted.
+ * `canceledBy` is recorded by cancelSubscriptionAtPeriodEndService ('user') and
+ * adminCancelSubscriptionService ('admin').
+ */
 const notifyUserCanceled = async (user, io, immediate) => {
+  const canceledByAdmin = user.subscription?.canceledBy === 'admin';
+  const reason = user.subscription?.cancelReason || null;
+
+  const emailLines = [`Hi ${user.username},`];
+
+  if (immediate) {
+    emailLines.push(
+      canceledByAdmin
+        ? 'Your subscription was canceled immediately by an administrator. Premium access has ended. Your account remains active.'
+        : 'Your subscription has ended and premium access is no longer active. Your account remains active.'
+    );
+  } else {
+    emailLines.push(
+      canceledByAdmin
+        ? 'Your subscription was canceled by an administrator and ends at the close of the current paid period. You keep access until then.'
+        : 'Your subscription is set to cancel at the end of the current paid period. You will keep access until that date.'
+    );
+  }
+
+  if (reason) {
+    emailLines.push(`Reason given: ${reason}`);
+  }
+
   await notifyUser({
     userId: user._id,
     io,
-    title: immediate ? 'Subscription canceled' : 'Cancellation scheduled',
+    title: immediate
+      ? (canceledByAdmin ? 'Subscription canceled by an administrator' : 'Subscription canceled')
+      : (canceledByAdmin ? 'Cancellation scheduled by an administrator' : 'Cancellation scheduled'),
     message: immediate
-      ? 'Your subscription has been canceled immediately. Premium access has ended.'
-      : 'Your subscription will cancel at the end of the current paid period. You keep access until then.',
-    emailSubject: 'PrepRX subscription cancellation',
-    emailLines: immediate
-      ? [
-          `Hi ${user.username},`,
-          'Your subscription has been canceled immediately by an administrator. Premium access has ended. Your account remains active.',
-        ]
-      : [
-          `Hi ${user.username},`,
-          'Your subscription is set to cancel at the end of the current paid period. You will keep access until that date.',
-        ],
+      ? (canceledByAdmin
+        ? 'An administrator canceled your subscription immediately. Premium access has ended.'
+        : 'Your subscription has ended. Premium access is no longer active.')
+      : (canceledByAdmin
+        ? 'Your subscription was canceled by an administrator and ends at the close of the current paid period. You keep access until then.'
+        : 'Your subscription will cancel at the end of the current paid period. You keep access until then.'),
+    emailSubject: canceledByAdmin
+      ? 'Your PrepRX subscription was canceled by an administrator'
+      : 'PrepRX subscription cancellation',
+    emailLines,
   });
 };
 

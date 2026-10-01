@@ -84,10 +84,18 @@ const userSchema = new mongoose.Schema({
     priceId: { type: String, default: null },
     premium: { type: Boolean, default: false },
     trialEndsAt: { type: Date, default: null },
+    // Set the first time a trial actually starts. Prevents granting a fresh
+    // trial on every checkout (cancel -> resubscribe trial loop).
+    trialUsedAt: { type: Date, default: null },
     paidThrough: { type: Date, default: null },
     currentPeriodEnd: { type: Date, default: null },
     graceEndsAt: { type: Date, default: null },
     cancelAtPeriodEnd: { type: Boolean, default: false },
+    // Who initiated the terminal cancellation. Drives notification copy —
+    // without it every user-cancel was reported as "canceled by an administrator".
+    canceledBy: { type: String, enum: ['user', 'admin', null], default: null },
+    cancelReason: { type: String, default: null },
+    cancelRequestedAt: { type: Date, default: null },
     canceledAt: { type: Date, default: null },
     suspendNotifiedAt: { type: Date, default: null }
   }

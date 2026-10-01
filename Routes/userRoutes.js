@@ -70,105 +70,115 @@ import {
 import upload from '../utilities/Multer.js';
 
 import { VerifyUser, allowRoles } from '../Middleware/auth/authentication.js';
+import { RequirePremium } from '../Middleware/auth/entitlement.js';
 
 const userRoutes = express.Router();
 
+// Any authenticated user — account/session plumbing that must keep working
+// for non-subscribers so they can reach (and fix) their billing state.
+const auth = [VerifyUser, allowRoles('user')];
+
+// Authenticated users WITH an active entitlement. `premium` is written only by
+// the Stripe webhook, so this cannot be bypassed from the client.
+const premiumAuth = [...auth, RequirePremium];
+
+// ---------- Public ----------
 userRoutes.post('/user/register', registerUser);
 userRoutes.post('/user/login', loginUser)
 userRoutes.post('/user/forgot-password', forgotPassword)
 userRoutes.post('/user/reset-password/:token', resetPassword)
-userRoutes.get('/user/logout', VerifyUser, allowRoles('user'), logout)
 userRoutes.post('/user/google-signin', googleLogin);
 
-// userRoutes.post('/user/chooseurGrowthZone',VerifyUser,chooseurGrowthZone)
+// ---------- Authenticated, not premium-gated ----------
+userRoutes.get('/user/logout', ...auth, logout)
+userRoutes.get('/user/Home', ...auth, home)
+userRoutes.put('/user/update-profile', ...auth, upload.single('profilePicture'), updateProfile)
 
-userRoutes.get('/user/Home', VerifyUser, allowRoles('user'), home)
-userRoutes.post('/user/chooseurGrowthZone', VerifyUser, allowRoles('user'), choosurGrowthZone)
-userRoutes.put('/user/update-profile', VerifyUser, allowRoles('user'), upload.single('profilePicture'), updateProfile)
+// ---------- Premium ----------
+userRoutes.post('/user/chooseurGrowthZone', ...premiumAuth, choosurGrowthZone)
 
-userRoutes.post('/user/CreateCustomQuiz', VerifyUser, allowRoles('user'), CreateCustomQuiz)
-userRoutes.post('/user/startQuiz', VerifyUser, allowRoles('user'), submitQuiz)
+userRoutes.post('/user/CreateCustomQuiz', ...premiumAuth, CreateCustomQuiz)
+userRoutes.post('/user/startQuiz', ...premiumAuth, submitQuiz)
 
 // strategy Questions route
-userRoutes.get('/user/getStrategyQuestions', VerifyUser, allowRoles('user'), getStrategyQuestions);
+userRoutes.get('/user/getStrategyQuestions', ...premiumAuth, getStrategyQuestions);
 
 // NCLEX Simulator routes
-userRoutes.post('/user/start-nclex-simulation', VerifyUser, allowRoles('user'), startNclexSimulation);
-userRoutes.post('/user/submit-nclex-answer', VerifyUser, allowRoles('user'), submitNclexAnswer);
+userRoutes.post('/user/start-nclex-simulation', ...premiumAuth, startNclexSimulation);
+userRoutes.post('/user/submit-nclex-answer', ...premiumAuth, submitNclexAnswer);
 
-userRoutes.post('/user/strategy/generate', VerifyUser, allowRoles('user'), generateDynamicStrategyDrill)
+userRoutes.post('/user/strategy/generate', ...premiumAuth, generateDynamicStrategyDrill)
 
-userRoutes.get('/user/getAllTopics', VerifyUser, allowRoles('user'), getAllTopics)
-userRoutes.get('/user/getAllTopics/:topicId', VerifyUser, allowRoles('user'), getSubtopicsByTopic)
+userRoutes.get('/user/getAllTopics', ...premiumAuth, getAllTopics)
+userRoutes.get('/user/getAllTopics/:topicId', ...premiumAuth, getSubtopicsByTopic)
 
-userRoutes.get('/user/getAllCrashCourses', VerifyUser, allowRoles('user'), getAllCrashCourses)
-userRoutes.get('/user/getAllCrashCourses/:topicName', VerifyUser, allowRoles('user'), getCrashCoursesByTopic)
-
-
-userRoutes.get('/user/getAllPriorityPractice', VerifyUser, allowRoles('user'), getAllPriorityPractice)
-userRoutes.get('/user/getAllPriorityPractice/:subtopicId', VerifyUser, allowRoles('user'), getAllPriorityPracticeForSubTopic)
-
-userRoutes.post('/user/sharePost', VerifyUser, allowRoles('user'), upload.single('file'), sharePost)
-userRoutes.get('/user/like/:postid', VerifyUser, allowRoles('user'), toggleLike)
-userRoutes.post('/user/comment/:postid', VerifyUser, allowRoles('user'), commentPost)
-userRoutes.get('/user/getallPosts', VerifyUser, allowRoles('user'), getAllPosts)
+userRoutes.get('/user/getAllCrashCourses', ...premiumAuth, getAllCrashCourses)
+userRoutes.get('/user/getAllCrashCourses/:topicName', ...premiumAuth, getCrashCoursesByTopic)
 
 
-userRoutes.post('/user/createNote', VerifyUser, allowRoles('user'), createNote)
-userRoutes.post('/user/updateNote/:noteid', VerifyUser, allowRoles('user'), updateNote)
-userRoutes.get('/user/deleteNote/:noteid', VerifyUser, allowRoles('user'), deleteNote)
-userRoutes.get('/user/getallNotes', VerifyUser, allowRoles('user'), getallNotes)
+userRoutes.get('/user/getAllPriorityPractice', ...premiumAuth, getAllPriorityPractice)
+userRoutes.get('/user/getAllPriorityPractice/:subtopicId', ...premiumAuth, getAllPriorityPracticeForSubTopic)
 
-userRoutes.post('/user/createStudyRequest', VerifyUser, allowRoles('user'), createStudyRequest)
-userRoutes.get('/user/getAllStudyRequests', VerifyUser, allowRoles('user'), getAllStudyRequests)
-userRoutes.post('/user/replyToStudyRequest/:requestId', VerifyUser, allowRoles('user'), replyToStudyRequest)
+userRoutes.post('/user/sharePost', ...premiumAuth, upload.single('file'), sharePost)
+userRoutes.get('/user/like/:postid', ...premiumAuth, toggleLike)
+userRoutes.get('/user/comment/:postid', ...premiumAuth, commentPost)
+userRoutes.get('/user/getallPosts', ...premiumAuth, getAllPosts)
+
+
+userRoutes.post('/user/createNote', ...premiumAuth, createNote)
+userRoutes.post('/user/updateNote/:noteid', ...premiumAuth, updateNote)
+userRoutes.get('/user/deleteNote/:noteid', ...premiumAuth, deleteNote)
+userRoutes.get('/user/getallNotes', ...premiumAuth, getallNotes)
+
+userRoutes.post('/user/createStudyRequest', ...premiumAuth, createStudyRequest)
+userRoutes.get('/user/getAllStudyRequests', ...premiumAuth, getAllStudyRequests)
+userRoutes.post('/user/replyToStudyRequest/:requestId', ...premiumAuth, replyToStudyRequest)
 // new added
-userRoutes.get('/user/studyBuddy/chat/:requestId', VerifyUser, allowRoles('user'), getChatHistory)
+userRoutes.get('/user/studyBuddy/chat/:requestId', ...premiumAuth, getChatHistory)
 
 
-userRoutes.post('/user/sendMessagetoBot', VerifyUser, allowRoles('user'), sendMessagetoBot)
-userRoutes.get('/user/getHistory/:userId', VerifyUser, allowRoles('user'), getHistory)//for sidebar chat histry
-userRoutes.get('/user/getSession/:sessionId', VerifyUser, allowRoles('user'), getSession)
+userRoutes.post('/user/sendMessagetoBot', ...premiumAuth, sendMessagetoBot)
+userRoutes.get('/user/getHistory/:userId', ...premiumAuth, getHistory)//for sidebar chat histry
+userRoutes.get('/user/getSession/:sessionId', ...premiumAuth, getSession)
 
 
-userRoutes.post('/user/shareNursingTips', VerifyUser, allowRoles('user'), shareNursingTips)
-userRoutes.get('/user/tipslike/:postid', VerifyUser, allowRoles('user'), NursingtoggleLike)
-userRoutes.post('/user/tipscomment/:postid', VerifyUser, allowRoles('user'), NursingcommentPost)
-userRoutes.get('/user/tipsgetallPosts', VerifyUser, allowRoles('user'), NusinggetAllPosts)
-userRoutes.get('/user/deleteTip/:tipId', VerifyUser, allowRoles('user'), deleteNursingTip)
+userRoutes.post('/user/shareNursingTips', ...premiumAuth, shareNursingTips)
+userRoutes.get('/user/tipslike/:postid', ...premiumAuth, NursingtoggleLike)
+userRoutes.get('/user/tipscomment/:postid', ...premiumAuth, NursingcommentPost)
+userRoutes.get('/user/tipsgetallPosts', ...premiumAuth, NusinggetAllPosts)
+userRoutes.get('/user/deleteTip/:tipId', ...premiumAuth, deleteNursingTip)
 
-userRoutes.get('/user/StudyMode/getAudio/:category', VerifyUser, allowRoles('user'), getAudioForPlayer)
-userRoutes.get('/user/StudyMode/getRandomAudio', VerifyUser, allowRoles('user'), getRandomAudioForPlayer)
-userRoutes.get('/user/StudyMode/categories', VerifyUser, allowRoles('user'), getAllSubliminalCategories)
+userRoutes.get('/user/StudyMode/getAudio/:category', ...premiumAuth, getAudioForPlayer)
+userRoutes.get('/user/StudyMode/getRandomAudio', ...premiumAuth, getRandomAudioForPlayer)
+userRoutes.get('/user/StudyMode/categories', ...premiumAuth, getAllSubliminalCategories)
 
-userRoutes.get('/user/affirmation/GetAffirmations', VerifyUser, allowRoles('user'), getAffirmationsController)
-userRoutes.get('/user/affirmation/GetAllAffirmations', VerifyUser, allowRoles('user'), getAllAffirmationsController)
-userRoutes.post('/user/affirmation/CreateAffirmation', VerifyUser, allowRoles('user'), addAffirmation)
-userRoutes.put('/user/affirmation/UpdateAffirmation/:affirmationId', VerifyUser, allowRoles('user'), updateAffirmationController)
-userRoutes.delete('/user/affirmation/DeleteAffirmation/:affirmationId', VerifyUser, allowRoles('user'), deleteAffirmationController)
+userRoutes.get('/user/affirmation/GetAffirmations', ...premiumAuth, getAffirmationsController)
+userRoutes.get('/user/affirmation/GetAllAffirmations', ...premiumAuth, getAllAffirmationsController)
+userRoutes.post('/user/affirmation/CreateAffirmation', ...premiumAuth, addAffirmation)
+userRoutes.put('/user/affirmation/UpdateAffirmation/:affirmationId', ...premiumAuth, updateAffirmationController)
+userRoutes.delete('/user/affirmation/DeleteAffirmation/:affirmationId', ...premiumAuth, deleteAffirmationController)
 
-userRoutes.post('/user/DailyFeeling/Check-in', VerifyUser, allowRoles('user'), checkInMood)
-userRoutes.get('/user/DailyFeeling/Analytics/:userId', VerifyUser, allowRoles('user'), getMoodAnalytics)
-userRoutes.get('/user/Analytics/:userId', VerifyUser, allowRoles('user'), getDashboardAnalytics)
+userRoutes.post('/user/DailyFeeling/Check-in', ...premiumAuth, checkInMood)
+userRoutes.get('/user/DailyFeeling/Analytics/:userId', ...premiumAuth, getMoodAnalytics)
+userRoutes.get('/user/Analytics/:userId', ...premiumAuth, getDashboardAnalytics)
 
-// userRoutes.get('/user/getAllPiriorityPractice', VerifyUser, allowRoles('user'), getAllPiriorityPractice)
-userRoutes.get('/user/getAllBehavioralHealth', VerifyUser, allowRoles('user'), 
+userRoutes.get('/user/getAllBehavioralHealth', ...premiumAuth,
 getBehavioralQuestions)
 
-userRoutes.get('/user/behavioral/counts', VerifyUser, allowRoles('user'), 
+userRoutes.get('/user/behavioral/counts', ...premiumAuth,
 getBehavioralCounts)
-userRoutes.get('/user/getQuestionsBySubtopic/:subtopicId', VerifyUser, allowRoles('user'), getQuestionsBySubtopic)
-userRoutes.get('/user/getAllQuestionsByTopic/:topicId', VerifyUser, allowRoles('user'), getAllQuestionsByTopic)
+userRoutes.get('/user/getQuestionsBySubtopic/:subtopicId', ...premiumAuth, getQuestionsBySubtopic)
+userRoutes.get('/user/getAllQuestionsByTopic/:topicId', ...premiumAuth, getAllQuestionsByTopic)
 
 // Visualization Room
-userRoutes.get('/user/getAllVisualization', VerifyUser, allowRoles('user'), getAllVisualization)
+userRoutes.get('/user/getAllVisualization', ...premiumAuth, getAllVisualization)
 
-userRoutes.get('/user/morningQuote/getLatestQuote', VerifyUser, allowRoles('user'), getLatestQuote)
-userRoutes.get('/user/daily-affirmation', VerifyUser, allowRoles('user'), getDailyAffirmation)
+userRoutes.get('/user/morningQuote/getLatestQuote', ...premiumAuth, getLatestQuote)
+userRoutes.get('/user/daily-affirmation', ...premiumAuth, getDailyAffirmation)
 
 // Flashcards
-userRoutes.post('/user/flashcards/add', VerifyUser, allowRoles('user'), addFlashcard);
-userRoutes.get('/user/flashcards/get', VerifyUser, allowRoles('user'), getFlashcards);
-userRoutes.delete('/user/flashcards/delete/:id', VerifyUser, allowRoles('user'), removeFlashcard);
+userRoutes.post('/user/flashcards/add', ...premiumAuth, addFlashcard);
+userRoutes.get('/user/flashcards/get', ...premiumAuth, getFlashcards);
+userRoutes.delete('/user/flashcards/delete/:id', ...premiumAuth, removeFlashcard);
 
 export default userRoutes;

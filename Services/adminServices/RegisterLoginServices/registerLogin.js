@@ -54,6 +54,13 @@ export const getAdminDashboardService = async (adminId) => {
 };
 
 export const getAllUsersService = async () => {
-  const users = await userModel.find().select('-password').sort({ createdAt: -1 });
+  // Never expose credentials to the admin browser:
+  // - password      : bcrypt hash
+  // - sessionToken  : the live bearer credential checked by VerifyUser
+  // - stripeCustomerId : internal Stripe identifier the admin UI never renders
+  const users = await userModel
+    .find()
+    .select('-password -sessionToken -stripeCustomerId')
+    .sort({ createdAt: -1 });
   return users;
 };

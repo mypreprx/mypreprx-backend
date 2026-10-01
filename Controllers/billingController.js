@@ -86,7 +86,15 @@ export const openBillingPortal = async (req, res) => {
 export const cancelOwnSubscription = async (req, res) => {
   try {
     const user = await loadUser(req.user.id);
-    const result = await cancelSubscriptionAtPeriodEndService(user);
+    // Churn reason collected by the cancel form. Optional, length-capped.
+    const { reason } = req.body || {};
+    if (reason != null && typeof reason !== 'string') {
+      return res.status(400).json({ success: false, message: 'reason must be a string' });
+    }
+    if (typeof reason === 'string' && reason.length > 500) {
+      return res.status(400).json({ success: false, message: 'reason must be 500 characters or fewer' });
+    }
+    const result = await cancelSubscriptionAtPeriodEndService(user, reason);
     return res.status(200).json({ success: true, message: result.message, data: result });
   } catch (error) {
     const status = error.message?.includes('No active subscription') ? 400 : 500;

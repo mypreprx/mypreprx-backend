@@ -10,7 +10,7 @@ import { notifyUser } from './notificationService.js';
  * - unpaid / canceled (non-recovered or ended) → suspend premium
  * - Never delete the user account
  */
-const mapStripeStatus = (stripeStatus, { hadPaymentFailure = false, cancelAtPeriodEnd = false } = {}) => {
+const mapStripeStatus = (stripeStatus, { hadPaymentFailure = false } = {}) => {
   switch (stripeStatus) {
     case 'trialing':
       return { status: 'trialing', premium: true };
@@ -22,12 +22,9 @@ const mapStripeStatus = (stripeStatus, { hadPaymentFailure = false, cancelAtPeri
       return { status: 'suspended', premium: false };
     case 'canceled':
       // Payment not recovered (dunning ended) → suspended.
-      // Normal end after user cancel-at-period-end → canceled (access already ran to period end).
+      // Otherwise access already ran to the end of the paid period → canceled.
       if (hadPaymentFailure) {
         return { status: 'suspended', premium: false };
-      }
-      if (cancelAtPeriodEnd) {
-        return { status: 'canceled', premium: false };
       }
       return { status: 'canceled', premium: false };
     case 'incomplete':
@@ -48,7 +45,7 @@ export const syncSubscriptionFromStripe = async (user, stripeSubscription, { io 
 
   const hadPaymentFailure = Boolean(user.subscription?.graceEndsAt) || eventReason === 'payment_failed';
   const cancelAtPeriodEnd = Boolean(sub.cancel_at_period_end);
-  const mapped = mapStripeStatus(sub.status, { hadPaymentFailure, cancelAtPeriodEnd });
+  const mapped = mapStripeStatus(sub.status, { hadPaymentFailure });
 
   const currentPeriodEnd = sub.items?.data?.[0]?.current_period_end
     ? new Date(sub.items.data[0].current_period_end * 1000)
@@ -72,6 +69,11 @@ export const syncSubscriptionFromStripe = async (user, stripeSubscription, { io 
     priceId,
     premium: mapped.premium,
     trialEndsAt: trialEndsAt || user.subscription?.trialEndsAt || null,
+    // Latched the first time a trial actually begins, so a later resubscribe
+    // cannot be granted a fresh trial (cancel -> resubscribe trial loop).
+    trialUsedAt:
+      user.subscription?.trialUsedAt ||
+      (mapped.status === 'trialing' ? new Date() : null),
     paidThrough: clearGrace
       ? (currentPeriodEnd || user.subscription?.paidThrough || null)
       : (user.subscription?.paidThrough || null),
@@ -115,8 +117,14 @@ export const handleInvoicePaymentFailed = async (user, invoice, { io = null } = 
   if (!user) return null;
 
   const now = new Date();
-  const graceEndsAt = new Date(now.getTime() + GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
-  const wasInGrace = Boolean(user.subscription?.graceEndsAt);
+  const existingGraceEndsAt = user.subscription?.graceEndsAt;
+  const wasInGrace = Boolean(existingGraceEndsAt);
+  // Fixed window: the deadline is set on the FIRST failure and never moves.
+  // Recomputing it on every dunning retry turned "7-day grace" into an
+  // open-ended rolling window a user could extend indefinitely.
+  const graceEndsAt = existingGraceEndsAt
+    ? new Date(existingGraceEndsAt)
+    : new Date(now.getTime() + GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
 
   user.subscription = {
     ...(user.subscription?.toObject?.() || user.subscription || {}),
@@ -138,7 +146,7 @@ export const handleInvoicePaymentFailed = async (user, invoice, { io = null } = 
     io,
     title: wasInGrace ? 'Payment reminder' : 'Payment failed',
     message: wasInGrace
-      ? `We still couldn't process your payment. Your ${GRACE_PERIOD_DAYS}-day grace period ends ${graceEndsLabel}. Access remains active.`
+      ? `We still couldn't process your payment. Your grace period still ends ${graceEndsLabel} — it has not been extended. Access remains active.`
       : `Your latest payment failed. You have a ${GRACE_PERIOD_DAYS}-day grace period (ends ${graceEndsLabel}). Access remains active.`,
     emailSubject: wasInGrace
       ? 'Payment reminder — PrepRX subscription'
@@ -146,7 +154,7 @@ export const handleInvoicePaymentFailed = async (user, invoice, { io = null } = 
     emailLines: [
       `Hi ${user.username},`,
       wasInGrace
-        ? `We were unable to process your subscription payment again. Your ${GRACE_PERIOD_DAYS}-day grace period ends on ${graceEndsLabel}.`
+        ? `We were unable to process your subscription payment again. Your grace period still ends on ${graceEndsLabel} — it has not been extended.`
         : `We were unable to process your subscription payment. A ${GRACE_PERIOD_DAYS}-day grace period has started and ends on ${graceEndsLabel}.`,
       'During the grace period your access remains active. Please update your payment method to avoid interruption.',
     ],

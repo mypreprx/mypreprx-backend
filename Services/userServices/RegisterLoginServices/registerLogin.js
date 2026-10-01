@@ -66,7 +66,7 @@ export const googleAuthService = async (googleToken) => {
   return { token, user, isNewUser };
 };
 export const registerUserService = async (userData) => {
-  const { username, email, password, confirmpassword, role } = userData;
+  const { username, email, password, confirmpassword } = userData;
 
   const existingUser = await userModel.findOne({ email });
   if (existingUser) {
@@ -82,7 +82,9 @@ export const registerUserService = async (userData) => {
     username,
     email,
     password: hashedpassword,
-    role
+    // Never trust a client-supplied role. A JWT with role "admin" resolves against
+    // adminModel in VerifyUser and would lock the account out of every route.
+    role: 'user'
   });
 
   return newUser;
@@ -127,6 +129,10 @@ export const logoutUserService = async (userId) => {
 };
 
 export const getUserHomeService = async (userID) => {
-  const user = await userModel.findById(userID);
+  // The client only needs identity + entitlement (subscription) to drive routing.
+  // Never send credentials to the browser.
+  const user = await userModel
+    .findById(userID)
+    .select('-password -sessionToken');
   return user;
 };

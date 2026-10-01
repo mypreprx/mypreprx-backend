@@ -108,7 +108,14 @@ export const registerUser = async (req, res) => {
     const newUser = await registerUserService(req.body);
     res.status(201).json({
       message: "User Registered Successfully",
-      newUser
+      // Strip credentials — the client never needs the hash or session token.
+      newUser: {
+        _id: newUser._id,
+        username: newUser.username,
+        email: newUser.email,
+        role: newUser.role,
+        createdAt: newUser.createdAt
+      }
     });
   } catch (error) {
     res.status(error.message.includes("Already exists") ? 400 : 500).json({
@@ -172,7 +179,17 @@ export const googleLogin = async (req, res) => {
       success: true,
       message: "Google Login Successful",
       token,
-      user,
+      // Strip credentials — googleAuthService returns the raw document.
+      user: {
+        _id: user._id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        profilePicture: user.profilePicture,
+        interestTopic: user.interestTopic,
+        subscription: user.subscription,
+        createdAt: user.createdAt
+      },
       isNewUser
     });
   } catch (error) {

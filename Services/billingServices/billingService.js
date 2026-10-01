@@ -1,11 +1,19 @@
 import userModel from '../../Models/userSchema.js';
 import { getStripe } from './stripeClient.js';
 import {
+  PLANS,
   getPlan,
+  getPlanIdByPriceId,
   getPlanPriceId,
   getFrontendUrl,
   TRIAL_DAYS,
 } from '../../Config/billingPlans.js';
+
+// Stripe subscription states that mean the user already holds (or owes) a
+// subscription. Checking these against Stripe — not the local cache — is what
+// closes the double-subscription window between Checkout completing and the
+// `customer.subscription.created` webhook landing.
+const LIVE_STRIPE_STATUSES = ['trialing', 'active', 'past_due', 'unpaid', 'paused'];
 
 const ensureStripeCustomer = async (user) => {
   if (user.stripeCustomerId) {
@@ -13,15 +21,36 @@ const ensureStripeCustomer = async (user) => {
   }
 
   const stripe = getStripe();
-  const customer = await stripe.customers.create({
-    email: user.email,
-    name: user.username,
-    metadata: { userId: user._id.toString() },
-  });
+  const userId = user._id.toString();
+
+  // Idempotency key derived from the user id: two concurrent checkout requests
+  // (double click, two tabs) resolve to ONE Stripe customer instead of creating
+  // an orphaned duplicate that Stripe's aggregates would silently exclude.
+  const customer = await stripe.customers.create(
+    {
+      email: user.email,
+      name: user.username,
+      metadata: { userId },
+    },
+    { idempotencyKey: `preprx-customer-${userId}` }
+  );
 
   user.stripeCustomerId = customer.id;
   await user.save();
   return customer.id;
+};
+
+/**
+ * A trial is granted once per account — the first subscription Stripe ever
+ * creates for this user. Any prior subscription (even a canceled one) means the
+ * user already consumed it.
+ */
+const isTrialEligible = (userDoc) => {
+  const sub = userDoc.subscription;
+  if (!sub) return true;
+  if (sub.trialUsedAt) return false;
+  if (sub.stripeSubscriptionId) return false;
+  return !['trialing', 'active', 'past_due', 'suspended', 'canceled'].includes(sub.status);
 };
 
 export const createCheckoutSessionService = async (userDoc, planId) => {
@@ -31,12 +60,18 @@ export const createCheckoutSessionService = async (userDoc, planId) => {
   const customerId = await ensureStripeCustomer(userDoc);
   const frontend = getFrontendUrl();
 
-  // If user already has an active/trialing/past_due subscription, send them to portal instead
-  const existing = userDoc.subscription;
-  if (
-    existing?.stripeSubscriptionId &&
-    ['trialing', 'active', 'past_due'].includes(existing.status)
-  ) {
+  // Authoritative check against Stripe. Relying on the local subscription cache
+  // lets a user start a second subscription while the first webhook is in flight.
+  const existingSubs = await stripe.subscriptions.list({
+    customer: customerId,
+    status: 'all',
+    limit: 100,
+  });
+  const liveSub = existingSubs.data.find((s) => LIVE_STRIPE_STATUSES.includes(s.status));
+
+  if (liveSub) {
+    // Already subscribed (or owes payment) — send them to the portal instead of
+    // creating a duplicate subscription.
     const portal = await stripe.billingPortal.sessions.create({
       customer: customerId,
       return_url: `${frontend}/subscriptions/manage`,
@@ -44,12 +79,15 @@ export const createCheckoutSessionService = async (userDoc, planId) => {
     return { url: portal.url, alreadySubscribed: true };
   }
 
+  const trialEligible = isTrialEligible(userDoc);
+
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
     customer: customerId,
     line_items: [{ price: priceId, quantity: 1 }],
     subscription_data: {
-      trial_period_days: TRIAL_DAYS,
+      // Only the very first subscription carries a trial.
+      ...(trialEligible ? { trial_period_days: TRIAL_DAYS } : {}),
       metadata: { userId: userDoc._id.toString(), planId },
     },
     metadata: { userId: userDoc._id.toString(), planId },
@@ -59,7 +97,7 @@ export const createCheckoutSessionService = async (userDoc, planId) => {
     cancel_url: `${frontend}/pricing`,
   });
 
-  return { url: session.url, sessionId: session.id, planId: plan.id };
+  return { url: session.url, sessionId: session.id, planId: plan.id, trialEligible };
 };
 
 export const createPortalSessionService = async (userDoc) => {
@@ -78,8 +116,10 @@ export const createPortalSessionService = async (userDoc) => {
 /**
  * User cancel → cancel at period end (access continues until end of paid period).
  * Admin immediate cancel is a separate service (adminCancelSubscriptionService).
+ * `reason` is the churn reason collected by the UI and is persisted so it is
+ * never lost (see CancelSubscription page).
  */
-export const cancelSubscriptionAtPeriodEndService = async (userDoc) => {
+export const cancelSubscriptionAtPeriodEndService = async (userDoc, reason = null) => {
   const stripe = getStripe();
   const subId = userDoc.subscription?.stripeSubscriptionId;
   if (!subId) {
@@ -101,8 +141,13 @@ export const cancelSubscriptionAtPeriodEndService = async (userDoc) => {
     });
   }
 
-  // Local optimistic flag — entitlement remains webhook-driven for premium/status
+  // Local optimistic flag — entitlement remains webhook-driven for premium/status.
+  // canceledBy/cancelReason are recorded here so the later
+  // `customer.subscription.deleted` webhook can send accurate copy.
   userDoc.subscription.cancelAtPeriodEnd = true;
+  userDoc.subscription.canceledBy = 'user';
+  userDoc.subscription.cancelReason = typeof reason === 'string' && reason.trim() ? reason.trim() : null;
+  userDoc.subscription.cancelRequestedAt = new Date();
   await userDoc.save();
 
   return {
@@ -112,7 +157,10 @@ export const cancelSubscriptionAtPeriodEndService = async (userDoc) => {
 };
 
 /**
- * PLAN CHANGE — Stripe handles proration for upgrades. No custom proration math.
+ * PLAN CHANGE — upgrades bill immediately via Stripe proration.
+ * Downgrades use proration_behavior: 'none' with an unchanged billing anchor so
+ * the lower price starts at the NEXT renewal. Using 'create_prorations' for a
+ * downgrade would refund the unused remainder to the card immediately.
  */
 export const changePlanService = async (userDoc, planId) => {
   const stripe = getStripe();
@@ -136,16 +184,28 @@ export const changePlanService = async (userDoc, planId) => {
     return { message: 'Already on this plan', planId: plan.id, unchanged: true };
   }
 
-  // Proration (including upgrades) is handled entirely by Stripe
-  await stripe.subscriptions.update(subId, {
+  // Direction of change is decided from the catalog, never from client input.
+  const currentPlanId = getPlanIdByPriceId(item.price.id);
+  const currentAmount = currentPlanId ? PLANS[currentPlanId]?.amount : null;
+  const isDowngrade = currentAmount != null && plan.amount < currentAmount;
+
+  const update = {
     items: [{ id: item.id, price: priceId }],
-    proration_behavior: 'create_prorations',
+    proration_behavior: isDowngrade ? 'none' : 'create_prorations',
     metadata: {
       ...(sub.metadata || {}),
       planId: plan.id,
       userId: userDoc._id.toString(),
     },
-  });
+  };
+
+  // Downgrades must not re-anchor the billing cycle, otherwise the customer is
+  // charged the new (lower) amount starting today.
+  if (isDowngrade) {
+    update.billing_cycle_anchor = 'unchanged';
+  }
+
+  await stripe.subscriptions.update(subId, update);
 
   // Fetch updated subscription and sync — webhook will also fire as source of truth
   const updated = await stripe.subscriptions.retrieve(subId);
@@ -155,8 +215,11 @@ export const changePlanService = async (userDoc, planId) => {
 
   return {
     planId: plan.id,
+    isDowngrade,
     stripeStatus: updated.status,
-    message: 'Plan change submitted. Entitlement and renewal details will synchronize via Stripe webhooks.',
+    message: isDowngrade
+      ? `Plan change to ${plan.title} scheduled. The new price starts at your next renewal on ${updated.current_period_end ? new Date(updated.current_period_end * 1000).toLocaleDateString('en-US') : 'the next billing date'} — no charge or refund today.`
+      : 'Plan change submitted. Entitlement and renewal details will synchronize via Stripe webhooks.',
   };
 };
 
@@ -168,21 +231,22 @@ export const getSubscriptionService = async (userDoc) => {
     planId: sub.planId || null,
     priceId: sub.priceId || null,
     trialEndsAt: sub.trialEndsAt || null,
+    trialUsedAt: sub.trialUsedAt || null,
     paidThrough: sub.paidThrough || null,
     currentPeriodEnd: sub.currentPeriodEnd || null,
     graceEndsAt: sub.graceEndsAt || null,
     cancelAtPeriodEnd: Boolean(sub.cancelAtPeriodEnd),
+    canceledBy: sub.canceledBy || null,
+    cancelReason: sub.cancelReason || null,
+    cancelRequestedAt: sub.cancelRequestedAt || null,
     stripeSubscriptionId: sub.stripeSubscriptionId || null,
     hasCustomer: Boolean(userDoc.stripeCustomerId),
+    // Derived from the catalog so prices can never drift from Config/billingPlans.js.
     plans: Object.fromEntries(
-      Object.entries(
-        // return catalog without secrets
-        {
-          monthly: { title: 'Monthly', amount: 2999, currency: 'usd' },
-          'three-month': { title: '3-Month', amount: 7999, currency: 'usd' },
-          annual: { title: 'Annual', amount: 25900, currency: 'usd' },
-        }
-      ).map(([id, p]) => [id, p])
+      Object.values(PLANS).map((p) => [
+        p.id,
+        { title: p.title, amount: p.amount, currency: p.currency },
+      ])
     ),
   };
 };
@@ -190,7 +254,7 @@ export const getSubscriptionService = async (userDoc) => {
 /**
  * Admin exception: immediate cancellation in Stripe.
  */
-export const adminCancelSubscriptionService = async (targetUserId, { io = null } = {}) => {
+export const adminCancelSubscriptionService = async (targetUserId) => {
   const user = await userModel.findById(targetUserId);
   if (!user) {
     throw new Error('User not found');
@@ -203,12 +267,21 @@ export const adminCancelSubscriptionService = async (targetUserId, { io = null }
       user.subscription.status = 'canceled';
       user.subscription.premium = false;
       user.subscription.cancelAtPeriodEnd = false;
+      user.subscription.canceledBy = 'admin';
+      user.subscription.canceledAt = new Date();
       await user.save();
     }
     return { user, hadStripeSubscription: false };
   }
 
   const stripe = getStripe();
+
+  // Mark the initiator BEFORE calling Stripe. The resulting
+  // `customer.subscription.deleted` webhook reads this to send the correct copy.
+  // Notifying here as well would double-notify the user (and double-email).
+  user.subscription.canceledBy = 'admin';
+  await user.save();
+
   await stripe.subscriptions.cancel(subId, {
     invoice_now: false,
     prorate: false,
@@ -221,18 +294,9 @@ export const adminCancelSubscriptionService = async (targetUserId, { io = null }
   user.subscription.canceledAt = new Date();
   await user.save();
 
-  const { notifyUser } = await import('./notificationService.js');
-  await notifyUser({
-    userId: user._id,
-    io,
-    title: 'Subscription canceled',
-    message: 'An administrator canceled your subscription immediately. Premium access has ended. Your account remains active.',
-    emailSubject: 'Your PrepRX subscription was canceled',
-    emailLines: [
-      `Hi ${user.username},`,
-      'Your subscription was canceled immediately by an administrator. Premium access has ended. Your account has not been deleted.',
-    ],
-  });
+  // Notification is deliberately NOT sent here: the authoritative
+  // `customer.subscription.deleted` webhook fires from stripe.subscriptions.cancel()
+  // above and sends exactly one in-app notification + email via notifyUserCanceled().
 
   return { user, hadStripeSubscription: true };
 };
