@@ -24,7 +24,6 @@ const invoicesFor = async (id) =>
 try {
   await webClient.post('/user/login', { email: process.env.E2E_EMAIL, password: process.env.E2E_PASSWORD });
 
-  const customer = (await stripe.customers.list({ email: process.env.E2E_EMAIL, limit: 1 })).data[0];
   const known = new Set((await stripe.checkout.sessions.list({ limit: 25 })).data.map((s) => s.id));
   await webClient.post('/billing/checkout', { planId: 'monthly' });
 
@@ -35,6 +34,11 @@ try {
     session = fresh.sort((a, b) => b.created - a.created)[0] ?? null;
   }
   if (!session) throw new Error('no checkout session created');
+
+  // customers.list does not parse under the pinned SDK 22.6.2 against this API
+  // version, so take the customer straight off the checkout session instead.
+  const customer = typeof session.customer === 'string' ? session.customer : session.customer?.id;
+  if (!customer) throw new Error('checkout session carried no customer');
 
   subId = (await stripe.subscriptions.create({
     customer,

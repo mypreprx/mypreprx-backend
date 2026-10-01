@@ -191,11 +191,10 @@ export const changePlanService = async (userDoc, planId) => {
 
   const update = {
     items: [{ id: item.id, price: priceId }],
-    proration_behavior: isDowngrade ? 'none' : 'create_prorations',
-    // Upgrade only: finalize the proration now so the customer is charged the
-    // difference today. Without always_invoice, create_prorations only attaches
-    // the proration to the next renewal invoice, so an upgrade charges nothing now.
-    ...(isDowngrade ? {} : { always_invoice: true }),
+    // Upgrade: 'always_invoice' finalizes the proration immediately so the
+    // customer pays the difference today. 'create_prorations' would only attach
+    // the proration to the next renewal invoice, charging nothing at upgrade time.
+    proration_behavior: isDowngrade ? 'none' : 'always_invoice',
     metadata: {
       ...(sub.metadata || {}),
       planId: plan.id,
