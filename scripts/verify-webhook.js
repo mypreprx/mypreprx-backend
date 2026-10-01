@@ -100,8 +100,9 @@ try {
     check('premium granted', adopted.premium === true);
     check('cancelAtPeriodEnd false (auto-renew on)', adopted.cancelAtPeriodEnd === false);
 
-    const notes = (await webClient.get('/billing/notifications')).data?.notifications ?? [];
-    check('webhook wrote notification', notes.length > 0, `${notes.length} notifications`);
+    const body = (await webClient.get('/billing/notifications')).data;
+    const notes = Array.isArray(body?.data) ? body.data : body?.data?.notifications ?? body?.notifications ?? [];
+    check('webhook wrote notification', notes.length > 0, `${notes.length} notifications, newest="${notes[0]?.title ?? 'none'}"`);
   } else {
     check('REAL WEBHOOK DELIVERED', false, 'not adopted within 180s');
   }
