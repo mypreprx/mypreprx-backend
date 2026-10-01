@@ -163,12 +163,21 @@ export const handleInvoicePaymentFailed = async (user, invoice, { io = null } = 
   return user;
 };
 
+export const getInvoiceSubscriptionId = (invoice) => {
+  if (!invoice) return null;
+  const direct = typeof invoice.subscription === 'string'
+    ? invoice.subscription
+    : invoice.subscription?.id;
+  if (direct) return direct;
+  const nested = invoice.parent?.subscription_details?.subscription;
+  if (!nested) return null;
+  return typeof nested === 'string' ? nested : nested.id ?? null;
+};
+
 export const handleInvoicePaymentSucceeded = async (user, invoice, { io = null } = {}) => {
   if (!user) return null;
 
-  const subscriptionId = typeof invoice.subscription === 'string'
-    ? invoice.subscription
-    : invoice.subscription?.id;
+  const subscriptionId = getInvoiceSubscriptionId(invoice);
 
   const hadGrace = Boolean(user.subscription?.graceEndsAt);
   const wasPastDue = user.subscription?.status === 'past_due' || user.subscription?.status === 'suspended';
@@ -181,11 +190,16 @@ export const handleInvoicePaymentSucceeded = async (user, invoice, { io = null }
       : null;
   if (periodEnd) paidThrough = periodEnd;
 
+  // A $0 subscription_create invoice is the trial starting, not a paid renewal.
+  // Forcing 'active' here would overwrite the trialing state set by
+  // customer.subscription.created and corrupt premium/renewal bookkeeping.
+  const isTrialStartInvoice =
+    invoice.billing_reason === 'subscription_create' && (invoice.amount_paid ?? 0) === 0;
+
   user.subscription = {
     ...(user.subscription?.toObject?.() || user.subscription || {}),
     stripeSubscriptionId: subscriptionId || user.subscription?.stripeSubscriptionId || null,
-    status: 'active',
-    premium: true,
+    ...(isTrialStartInvoice ? {} : { status: 'active', premium: true }),
     paidThrough,
     graceEndsAt: null,
     suspendNotifiedAt: null,
@@ -218,7 +232,7 @@ export const findUserByStripeEvent = async (obj) => {
     if (byMeta) return byMeta;
   }
 
-  const subscriptionId = typeof obj.subscription === 'string' ? obj.subscription : obj.id?.startsWith?.('sub_') ? obj.id : null;
+  const subscriptionId = getInvoiceSubscriptionId(obj) || (obj.id?.startsWith?.('sub_') ? obj.id : null);
   if (subscriptionId) {
     const bySub = await userModel.findOne({ 'subscription.stripeSubscriptionId': subscriptionId });
     if (bySub) return bySub;

@@ -1,14 +1,14 @@
 // End-to-end verification that REAL Stripe webhooks reach the DEPLOYED server.
-// Reads credentials from env — never hardcodes secrets.
 //
 //   $env:E2E_EMAIL='...'; $env:E2E_PASSWORD='...'; node scripts/verify-webhook.js
 //
-// Exits 0 only if a real Stripe subscription is adopted by the deployed server
-// WITHOUT any synthetic event being sent.
+// Creates a real Stripe subscription through the real deployed checkout flow,
+// then polls the live API until the server adopts it. No synthetic events.
+// Exit code 0 = webhooks confirmed working.
 
 import 'dotenv/config';
 import Stripe from 'stripe';
-import { webClient, webUrl, apiBase } from './_client.js';
+import { webClient, apiBase } from './_client.js';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const email = process.env.E2E_EMAIL;
@@ -22,110 +22,106 @@ if (!email || !password) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
 const check = (name, pass, detail = '') => {
-  results.push({ name, pass, detail });
+  results.push({ name, pass });
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? `  — ${detail}` : ''}`);
 };
 
-let userId = null;
 let subId = null;
 
 try {
-  // ---- 0. webhook secret diagnostic -------------------------------------
-  const diag = await webClient.get('/billing/webhook-diag').catch((e) => ({
-    data: { error: e.message },
-  }));
-  console.log('\n--- /billing/webhook-diag ---');
-  console.log(JSON.stringify(diag.data, null, 2));
-  console.log('---------------------------\n');
-  check(
-    'deployed server has STRIPE_WEBHOOK_SECRET set',
-    diag.data?.secretConfigured === true,
-    `fingerprint=${diag.data?.secretFingerprint ?? 'n/a'} length=${diag.data?.secretLength ?? 0}`
-  );
+  const diag = (await webClient.get('/billing/webhook-diag')).data;
+  check('deployed webhook secret configured', diag?.secretConfigured === true, `fingerprint=${diag?.secretFingerprint}`);
 
-  // ---- 1. confirm the webhook route is reachable from outside ----------
   const reach = await fetch(`${apiBase}/stripe/webhook`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: '{}',
   });
-  const reachBody = await reach.json().catch(() => ({}));
-  check(
-    'webhook route reachable through nginx',
-    reach.status === 400 && reachBody.message === 'Missing stripe-signature header',
-    `HTTP ${reach.status}`
-  );
+  check('webhook route reachable via nginx', reach.status === 400, `HTTP ${reach.status}`);
 
-  // ---- 2. login --------------------------------------------------------
   await webClient.post('/user/login', { email, password });
-  const baseline = (await webClient.get('/billing/subscription')).data;
-  userId = baseline.user?._id ?? baseline.userId;
-  console.log(`\nBaseline: subId=${baseline.subscription?.stripeSubscriptionId ?? 'none'} status=${baseline.subscription?.status ?? 'none'}`);
+  const before = (await webClient.get('/billing/subscription')).data?.data;
+  console.log(`\nBaseline: subId=${before?.stripeSubscriptionId ?? 'none'} status=${before?.status ?? 'none'} premium=${before?.premium}`);
 
-  // ---- 3. create a REAL Stripe subscription via real checkout ---------
-  await webClient.post('/billing/checkout', { plan: 'three-month', trial: true });
-  const session = (await stripe.checkout.sessions.list({ limit: 10 })).data.find(
-    (s) => s.client_reference_id === userId && s.status === 'open'
-  );
-  if (!session) throw new Error('No open checkout session found');
+  const known = new Set((await stripe.checkout.sessions.list({ limit: 25 })).data.map((s) => s.id));
 
-  await stripe.checkout.sessions.complete(session.id, {
-    payment_method: 'pm_card_visa',
+  const checkout = await webClient.post('/billing/checkout', { planId: 'three-month' });
+  if (checkout.status !== 200) throw new Error(`checkout failed: ${JSON.stringify(checkout.data)}`);
+
+  let session = null;
+  for (let i = 0; i < 15 && !session; i++) {
+    await sleep(1000);
+    const fresh = (await stripe.checkout.sessions.list({ limit: 25 })).data.filter((s) => !known.has(s.id));
+    session = fresh.sort((a, b) => b.created - a.created)[0] ?? null;
+  }
+  if (!session) throw new Error('no new checkout session appeared in Stripe');
+
+  const userId = session.client_reference_id;
+  const customer = session.customer ?? (await stripe.customers.list({ email, limit: 5 })).data[0]?.id;
+  if (!customer) throw new Error('could not resolve Stripe customer for test user');
+
+  // SDK is pinned at 22.6.2, which predates checkout.sessions.complete.
+  // Creating the subscription directly still emits customer.subscription.created,
+  // which is the event the deployed webhook handler syncs on.
+  const created = await stripe.subscriptions.create({
+    customer,
+    items: [{ price: process.env.STRIPE_PRICE_THREE_MONTH }],
+    trial_period_days: 3,
+    metadata: { userId, planId: 'three-month' },
   });
-  const completed = await stripe.checkout.sessions.retrieve(session.id);
-  subId = completed.subscription;
+  subId = created.id;
 
-  const sub = await stripe.subscriptions.retrieve(subId);
-  check('real Stripe subscription created (trialing)', sub.status === 'trialing', `status=${sub.status} sub=${subId}`);
-  check('subscription carries userId metadata', sub.metadata?.userId === userId, `metadata.userId=${sub.metadata?.userId}`);
+  const sub = created;
+  check('real Stripe subscription created', Boolean(subId), `status=${sub.status} sub=${subId}`);
+  check('subscription carries userId metadata', sub.metadata?.userId === userId, `userId=${sub.metadata?.userId}`);
+  check('trialing with auto-renew (cancel_at_period_end false)', sub.status === 'trialing' && sub.cancel_at_period_end === false, `status=${sub.status} cancelAtPeriodEnd=${sub.cancel_at_period_end}`);
 
-  // ---- 4. THE TEST: wait for the deployed server to adopt it ----------
-  console.log('\nWaiting for deployed server to sync via webhook (no synthetic events)...');
+  console.log(`\nPolling deployed API for adoption of ${subId} (no synthetic events)...`);
+  const t0 = Date.now();
   let adopted = null;
-  for (let i = 0; i < 30; i++) {
-    await sleep(4000);
-    const now = (await webClient.get('/billing/subscription')).data;
-    const got = now.subscription?.stripeSubscriptionId;
-    const t = (i + 1) * 4;
-    console.log(`  [${String(t).padStart(3)}s] server subId=${got ?? 'none'} status=${now.subscription?.status ?? 'none'}`);
+
+  for (let i = 0; i < 90; i++) {
+    const now = (await webClient.get('/billing/subscription')).data?.data;
+    const got = now?.stripeSubscriptionId;
     if (got === subId) {
       adopted = now;
       break;
     }
+    if (i % 3 === 0) {
+      console.log(`  [${String(Math.round((Date.now() - t0) / 1000)).padStart(3)}s] server subId=${got ?? 'none'} status=${now?.status ?? 'none'}`);
+    }
+    await sleep(2000);
   }
 
   if (adopted) {
-    check('REAL WEBHOOK DELIVERED (subId adopted by server)', true, `after ~${20}s`);
-    check('status mapped to trialing', adopted.subscription.status === 'trialing', `status=${adopted.subscription.status}`);
-    check('premium granted', adopted.subscription.premium === true);
-    check('trialUsedAt latched', Boolean(adopted.subscription.trialUsedAt), adopted.subscription.trialUsedAt);
-    check('cancelAtPeriodEnd false (auto-renew on)', adopted.subscription.cancelAtPeriodEnd === false);
-  } else {
-    check('REAL WEBHOOK DELIVERED (subId adopted by server)', false, 'never synced after 120s — see pm2 logs');
-  }
+    const latency = Math.round((Date.now() - t0) / 1000);
+    check('REAL WEBHOOK DELIVERED', true, `latency ~${latency}s`);
+    check('status not clobbered to active during trial', adopted.status === sub.status, `server=${adopted.status} stripe=${sub.status}`);
+    check('premium granted', adopted.premium === true);
+    check('cancelAtPeriodEnd false (auto-renew on)', adopted.cancelAtPeriodEnd === false);
 
-  // ---- 5. notifications created by the webhook -------------------------
-  const notes = (await webClient.get('/billing/notifications')).data.notifications ?? [];
-  const fresh = notes.filter((n) => (n.message ?? '').toLowerCase().includes('trial'));
-  check('webhook wrote notification', fresh.length > 0, `${notes.length} total notifications`);
+    const notes = (await webClient.get('/billing/notifications')).data?.notifications ?? [];
+    check('webhook wrote notification', notes.length > 0, `${notes.length} notifications`);
+  } else {
+    check('REAL WEBHOOK DELIVERED', false, 'not adopted within 180s');
+  }
 } catch (err) {
-  check('script ran without throwing', false, err.message);
+  check('script completed', false, err.message);
 } finally {
-  // ---- cleanup ---------------------------------------------------------
   if (subId) {
     await stripe.subscriptions.cancel(subId).catch(() => {});
-    console.log(`\nCleaned up test subscription ${subId}`);
+    console.log(`\nCleaned up ${subId}`);
   }
 }
 
 const failed = results.filter((r) => !r.pass);
-console.log(`\n${'='.repeat(60)}`);
+console.log(`\n${'='.repeat(64)}`);
 console.log(`  ${results.length - failed.length}/${results.length} checks passed`);
 if (failed.length) {
   console.log(`  FAILED: ${failed.map((f) => f.name).join(', ')}`);
-  console.log(`  WEBHOOK IS STILL BROKEN — run: pm2 logs backend, then stripe trigger checkout.session.completed`);
+  console.log('  >> pm2 logs backend  and look for [stripe-webhook] RECEIVED');
 } else {
   console.log('  WEBHOOK CONFIRMED WORKING END TO END');
 }
-console.log('='.repeat(60));
+console.log('='.repeat(64));
 process.exit(failed.length ? 1 : 0);

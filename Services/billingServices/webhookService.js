@@ -3,6 +3,7 @@ import {
   syncSubscriptionFromStripe,
   handleInvoicePaymentFailed,
   handleInvoicePaymentSucceeded,
+  getInvoiceSubscriptionId,
   findUserByStripeEvent,
 } from './entitlementService.js';
 import { notifyUser } from './notificationService.js';
@@ -227,12 +228,10 @@ export const handleStripeWebhookEvent = async (event, io = null) => {
       const user = await findUserByStripeEvent(object);
       if (!user) break;
 
-      // Also re-sync full subscription if linked
-      await handleInvoicePaymentSucceeded(user, object, { io });
-
-      const subId = typeof object.subscription === 'string'
-        ? object.subscription
-        : object.subscription?.id;
+      // Stripe moved invoice.subscription to parent.subscription_details.subscription.
+      // Resolve first, then let the authoritative subscription sync set status,
+      // then apply payment bookkeeping (paidThrough, grace clear, recovery notice).
+      const subId = getInvoiceSubscriptionId(object);
       if (subId) {
         const stripe = getStripe();
         try {
@@ -241,7 +240,11 @@ export const handleStripeWebhookEvent = async (event, io = null) => {
         } catch (err) {
           console.error('Post-payment subscription sync failed:', err.message);
         }
+      } else {
+        console.warn(`[stripe-webhook] ${type} ${object.id} had no resolvable subscription; skipping authoritative sync`);
       }
+
+      await handleInvoicePaymentSucceeded(user, object, { io });
       break;
     }
 

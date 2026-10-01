@@ -213,12 +213,16 @@ export const changePlanService = async (userDoc, planId) => {
   userDoc.subscription.planId = plan.id;
   await userDoc.save();
 
+  // Stripe moved current_period_end to the subscription item in newer API versions
+  const periodEnd = updated.items?.data?.[0]?.current_period_end ?? updated.current_period_end;
+  const renewalDate = periodEnd ? new Date(periodEnd * 1000).toLocaleDateString('en-US') : 'the next billing date';
+
   return {
     planId: plan.id,
     isDowngrade,
     stripeStatus: updated.status,
     message: isDowngrade
-      ? `Plan change to ${plan.title} scheduled. The new price starts at your next renewal on ${updated.current_period_end ? new Date(updated.current_period_end * 1000).toLocaleDateString('en-US') : 'the next billing date'} — no charge or refund today.`
+      ? `Plan change to ${plan.title} scheduled. The new price starts at your next renewal on ${renewalDate} — no charge or refund today.`
       : 'Plan change submitted. Entitlement and renewal details will synchronize via Stripe webhooks.',
   };
 };
