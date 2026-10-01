@@ -68,6 +68,17 @@ export const startCheckout = async (req, res) => {
       return res.status(400).json({ success: false, message: 'planId is required' });
     }
     const result = await createCheckoutSessionService(user, planId);
+    // The guard returns a billing-portal URL instead of a checkout session when a
+    // live subscription already exists. Stay on 200 because the client follows
+    // data.url either way, but report accurately instead of claiming a checkout
+    // session was created.
+    if (result.alreadySubscribed) {
+      return res.status(200).json({
+        success: true,
+        message: 'You already have an active subscription. Opening the billing portal.',
+        data: result,
+      });
+    }
     return res.status(200).json({ success: true, message: 'Checkout session created', data: result });
   } catch (error) {
     const status = error.message?.includes('Invalid plan') || error.message?.includes('Missing Stripe')
