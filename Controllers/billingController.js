@@ -36,9 +36,13 @@ export const stripeWebhookHandler = async (req, res) => {
   try {
     event = constructStripeEvent(req.body, signature);
   } catch (err) {
-    console.error('Webhook signature verification failed:', err.message);
+    console.error('[stripe-webhook] SIGNATURE VERIFICATION FAILED:', err.message);
     return res.status(400).json({ success: false, message: `Webhook Error: ${err.message}` });
   }
+
+  // Visible in `pm2 logs backend`. If this line never appears, the request is
+  // not reaching Node at all (nginx / routing) rather than a code fault.
+  console.log(`[stripe-webhook] RECEIVED ${event.type} id=${event.id}`);
 
   try {
     const io = req.app.get('io');
