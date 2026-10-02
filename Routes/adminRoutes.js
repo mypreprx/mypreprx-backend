@@ -60,6 +60,7 @@ import {
   getPromoCode,
   updatePromoCode,
   deletePromoCode,
+  downloadPromoQr,
   // getSubtopicsByTopic
 } from '../Controllers/adminController.js'
 import { VerifyUser, allowRoles } from '../Middleware/auth/authentication.js';
@@ -142,6 +143,8 @@ adminRoutes.post('/admin/behavioral/generateBank', VerifyUser, allowRoles('admin
 adminRoutes.get('/admin/promo-codes/generate', VerifyUser, allowRoles('admin'), generatePromoCode)
 adminRoutes.post('/admin/promo-codes', VerifyUser, allowRoles('admin'), createPromoCode)
 adminRoutes.get('/admin/promo-codes', VerifyUser, allowRoles('admin'), getAllPromoCodes)
+// Must precede `/admin/promo-codes/:id` or "qr" is captured as an id.
+adminRoutes.get('/admin/promo-codes/:id/qr', VerifyUser, allowRoles('admin'), downloadPromoQr)
 adminRoutes.get('/admin/promo-codes/:id', VerifyUser, allowRoles('admin'), getPromoCode)
 adminRoutes.put('/admin/promo-codes/:id', VerifyUser, allowRoles('admin'), updatePromoCode)
 adminRoutes.delete('/admin/promo-codes/:id', VerifyUser, allowRoles('admin'), deletePromoCode)

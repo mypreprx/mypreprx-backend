@@ -85,6 +85,7 @@ import {
   buildPromoLink,
   generateCodeString
 } from '../Services/adminServices/PromoCodeServices/PromoCodeService.js'
+import { promoQrPngBuffer } from '../Services/adminServices/PromoCodeServices/promoQr.js'
 
 import {
   generateStudyBankService
@@ -995,6 +996,31 @@ export const getAllPromoCodes = async (req, res) => {
       message: "All promo codes fetched successfully",
       data: promos
     });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/**
+ * Downloads the promo QR as a PNG.
+ *
+ * Registered before `/admin/promo-codes/:id` so `qr` is not swallowed as an id.
+ */
+export const downloadPromoQr = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const promo = await getPromoCodeByIdService(id);
+    if (!promo) return res.status(404).json({ success: false, message: "Promo code not found" });
+
+    const png = await promoQrPngBuffer(promo.qrPayload || promo.link);
+
+    // Filename carries the code so a downloaded file is identifiable, and the
+    // code is already uppercase + alphanumeric so it is filename-safe.
+    const safeCode = String(promo.code).replace(/[^A-Z0-9-]/g, '');
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Content-Disposition', `attachment; filename="promo-${safeCode}.png"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(png);
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

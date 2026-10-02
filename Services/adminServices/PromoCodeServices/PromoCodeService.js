@@ -76,7 +76,15 @@ export const createPromoCodeService = async ({
   });
 };
 
-export const getAllPromoCodesService = () => PromoCode.find().sort({ createdAt: -1 });
+/**
+ * Populate the redeeming account so the admin list can show who used the code.
+ * `redemptionEmail` is the snapshot fallback: if the user row is later deleted
+ * the audit trail survives.
+ */
+export const getAllPromoCodesService = () =>
+  PromoCode.find()
+    .populate('redeemedBy', 'username email subscription.status subscription.promoEndsAt createdAt')
+    .sort({ createdAt: -1 });
 
 export const getPromoCodeByIdService = (id) => PromoCode.findById(id);
 
