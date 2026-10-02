@@ -124,9 +124,12 @@ export const registerUser = async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(error.message.includes("Already exists") ? 400 : 500).json({
-      message: error.message
-    });
+    // Client mistakes are 4xx, not 5xx — a mismatched confirmation password is
+    // a form error, and reporting it as a server fault hides the real message
+    // behind a generic error page.
+    const clientErrors = ["Already exists", "Password should be same"];
+    const isClientError = clientErrors.some((m) => error.message.includes(m));
+    res.status(isClientError ? 400 : 500).json({ message: error.message });
   }
 };
 

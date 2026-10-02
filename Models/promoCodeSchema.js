@@ -32,11 +32,15 @@ const PromoCodeSchema = new mongoose.Schema(
       required: [true, "Link is required"],
       trim: true
     },
-    // Encoded into the QR image. Defaults to `link` on creation.
+    // Encoded into the QR image. Defaults to `link` so any creation path that
+    // sets a link gets a working payload without duplicating the derivation.
     qrPayload: {
       type: String,
       required: true,
-      trim: true
+      trim: true,
+      default: function () {
+        return this.link;
+      },
     },
     notes: {
       type: String,
