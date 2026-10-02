@@ -7,6 +7,7 @@ import {
   updateProfile,
   logout,
   googleLogin,
+  redeemPromoCode,
   CreateCustomQuiz,
   choosurGrowthZone,
   submitQuiz,
@@ -69,8 +70,9 @@ import {
 } from '../Controllers/adminController.js'
 import upload from '../utilities/Multer.js';
 
-import { VerifyUser, allowRoles } from '../Middleware/auth/authentication.js';
+import { VerifyUser, allowRoles, RequireBearerUser } from '../Middleware/auth/authentication.js';
 import { RequirePremium } from '../Middleware/auth/entitlement.js';
+import { rateLimit } from '../Middleware/rateLimit.js';
 
 const userRoutes = express.Router();
 
@@ -93,6 +95,21 @@ userRoutes.post('/user/google-signin', googleLogin);
 userRoutes.get('/user/logout', ...auth, logout)
 userRoutes.get('/user/Home', ...auth, home)
 userRoutes.put('/user/update-profile', ...auth, upload.single('profilePicture'), updateProfile)
+
+// ---------- Promo codes ----------
+// Deliberately NOT premium-gated: a non-subscriber is exactly who redeems.
+// RequireBearerUser runs before VerifyUser so a cross-site form post carrying
+// only the session cookie cannot consume a code against someone's account.
+userRoutes.post(
+  '/user/promo/redeem',
+  RequireBearerUser,
+  ...auth,
+  // AFTER auth on purpose: the limiter keys on the authenticated user id when
+  // it can, so one account's burst cannot exhaust the budget for everyone else
+  // sharing an IP (offices, campuses, mobile carriers).
+  rateLimit({ windowMs: 60 * 1000, max: 10, keyPrefix: 'promo-redeem' }),
+  redeemPromoCode
+)
 
 // ---------- Premium ----------
 userRoutes.post('/user/chooseurGrowthZone', ...premiumAuth, choosurGrowthZone)

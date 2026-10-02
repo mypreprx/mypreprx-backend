@@ -47,6 +47,20 @@ export const syncSubscriptionFromStripe = async (user, stripeSubscription, { io 
   const cancelAtPeriodEnd = Boolean(sub.cancel_at_period_end);
   const mapped = mapStripeStatus(sub.status, { hadPaymentFailure });
 
+  const promoHoldsEntitlement =
+    user.subscription?.status === 'promo' &&
+    Boolean(user.subscription?.promoEndsAt) &&
+    user.subscription.promoEndsAt.getTime() > Date.now();
+
+  // A promo grant is independent of Stripe. A replayed or late webhook for a
+  // subscription that had already finished must not revoke access the user now
+  // holds through a promo code. When Stripe reports a *live* subscription
+  // (mapped.premium) it still wins, so a promo user who later buys a plan is
+  // tracked normally.
+  if (promoHoldsEntitlement && !mapped.premium) {
+    return user;
+  }
+
   const currentPeriodEnd = sub.items?.data?.[0]?.current_period_end
     ? new Date(sub.items.data[0].current_period_end * 1000)
     : sub.current_period_end

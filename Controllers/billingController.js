@@ -8,6 +8,7 @@ import {
   adminCancelSubscriptionService,
 } from '../Services/billingServices/billingService.js';
 import { constructStripeEvent, handleStripeWebhookEvent } from '../Services/billingServices/webhookService.js';
+import { revokeExpiredPromoIfNeeded } from '../Services/billingServices/promoRedemptionService.js';
 import {
   listNotificationsService,
   markNotificationsReadService,
@@ -137,6 +138,9 @@ export const changeOwnPlan = async (req, res) => {
 export const getOwnSubscription = async (req, res) => {
   try {
     const user = await loadUser(req.user.id);
+    // Report a lapsed promo as ended rather than active, so the subscription
+    // screen matches what the paywall will actually allow.
+    await revokeExpiredPromoIfNeeded(user);
     const data = await getSubscriptionService(user);
     return res.status(200).json({ success: true, message: 'Subscription fetched', data });
   } catch (error) {

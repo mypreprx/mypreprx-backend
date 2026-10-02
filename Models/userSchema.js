@@ -77,7 +77,7 @@ const userSchema = new mongoose.Schema({
     stripeSubscriptionId: { type: String, default: null },
     status: {
       type: String,
-      enum: ['none', 'trialing', 'active', 'past_due', 'suspended', 'canceled'],
+      enum: ['none', 'trialing', 'active', 'past_due', 'suspended', 'canceled', 'promo'],
       default: 'none'
     },
     planId: { type: String, default: null },
@@ -97,7 +97,18 @@ const userSchema = new mongoose.Schema({
     cancelReason: { type: String, default: null },
     cancelRequestedAt: { type: Date, default: null },
     canceledAt: { type: Date, default: null },
-    suspendNotifiedAt: { type: Date, default: null }
+    suspendNotifiedAt: { type: Date, default: null },
+
+    // Promo entitlement (single-use promo code redemption).
+    // Kept separate from the Stripe fields so granting or expiring a promo can
+    // never be mistaken for a paid subscription.
+    promoCodeId: { type: mongoose.Schema.Types.ObjectId, ref: 'PromoCode', default: null },
+    promoCodeText: { type: String, default: null },
+    promoRedeemedAt: { type: Date, default: null },
+    promoEndsAt: { type: Date, default: null },
+    // Set when the free period lapsed. After this the user is back on the
+    // normal paywall and must buy a plan.
+    promoExpiredAt: { type: Date, default: null }
   }
 }, { timestamps: true });
 

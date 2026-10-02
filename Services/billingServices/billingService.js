@@ -50,7 +50,9 @@ const isTrialEligible = (userDoc) => {
   if (!sub) return true;
   if (sub.trialUsedAt) return false;
   if (sub.stripeSubscriptionId) return false;
-  return !['trialing', 'active', 'past_due', 'suspended', 'canceled'].includes(sub.status);
+  // 'promo' is excluded on purpose: those users already received 6 free months,
+  // so they must not also collect the 3-day trial when they later buy.
+  return !['trialing', 'active', 'past_due', 'suspended', 'canceled', 'promo'].includes(sub.status);
 };
 
 export const createCheckoutSessionService = async (userDoc, planId) => {
@@ -248,6 +250,14 @@ export const getSubscriptionService = async (userDoc) => {
     cancelRequestedAt: sub.cancelRequestedAt || null,
     stripeSubscriptionId: sub.stripeSubscriptionId || null,
     hasCustomer: Boolean(userDoc.stripeCustomerId),
+    // Promo entitlement (single-use code redemption, no Stripe subscription).
+    promo: sub.status === 'promo'
+      ? {
+          code: sub.promoCodeText || null,
+          redeemedAt: sub.promoRedeemedAt || null,
+          endsAt: sub.promoEndsAt || null,
+        }
+      : null,
     // Derived from the catalog so prices can never drift from Config/billingPlans.js.
     plans: Object.fromEntries(
       Object.values(PLANS).map((p) => [
@@ -269,6 +279,20 @@ export const adminCancelSubscriptionService = async (targetUserId) => {
 
   const subId = user.subscription?.stripeSubscriptionId;
   if (!subId || user.subscription?.status === 'canceled' || user.subscription?.status === 'none') {
+    // A promo grant has no Stripe subscription, but it still has to be
+    // revocable — otherwise an admin could not remove an abused promo code.
+    // The code itself stays consumed: the user did use it.
+    if (user.subscription?.status === 'promo') {
+      user.subscription.status = 'canceled';
+      user.subscription.premium = false;
+      user.subscription.cancelAtPeriodEnd = false;
+      user.subscription.canceledBy = 'admin';
+      user.subscription.cancelReason = 'promo_revoked_by_admin';
+      user.subscription.canceledAt = new Date();
+      await user.save();
+      return { user, hadStripeSubscription: false };
+    }
+
     // Nothing to cancel in Stripe — clear local entitlement only if present
     if (user.subscription?.stripeSubscriptionId) {
       user.subscription.status = 'canceled';

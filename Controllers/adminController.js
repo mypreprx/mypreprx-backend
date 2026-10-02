@@ -77,6 +77,16 @@ import {
 } from '../Services/adminServices/BehavioralServices/BehavioralServices.js'
 
 import {
+  createPromoCodeService,
+  getAllPromoCodesService,
+  getPromoCodeByIdService,
+  updatePromoCodeService,
+  deletePromoCodeService,
+  buildPromoLink,
+  generateCodeString
+} from '../Services/adminServices/PromoCodeServices/PromoCodeService.js'
+
+import {
   generateStudyBankService
 } from '../Services/adminServices/StudyServices/StudyServices.js'
 
@@ -936,5 +946,111 @@ export const deleteQuote = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+/* ------------------------------------------------------------------ *
+ *  PROMO CODES
+ *  A promo is shared three ways: random code, shareable link, QR code.
+ *  Redemption rules are not modelled yet — they are still being defined.
+ * ------------------------------------------------------------------ */
+
+/** Preview a freshly generated code + link without saving anything. */
+export const generatePromoCode = async (req, res) => {
+  try {
+    const code = generateCodeString();
+    res.status(200).json({
+      success: true,
+      message: "Generated promo code",
+      data: { code, link: buildPromoLink(code) }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const createPromoCode = async (req, res) => {
+  try {
+    const promo = await createPromoCodeService(req.body);
+
+    res.status(201).json({
+      success: true,
+      message: "Promo code created successfully",
+      data: promo
+    });
+  } catch (error) {
+    res.status(error.status || 500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+export const getAllPromoCodes = async (req, res) => {
+  try {
+    const promos = await getAllPromoCodesService();
+
+    res.status(200).json({
+      success: true,
+      message: "All promo codes fetched successfully",
+      data: promos
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getPromoCode = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const promo = await getPromoCodeByIdService(id);
+
+    if (!promo) {
+      return res.status(404).json({ success: false, message: "Promo code not found" });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Promo code fetched successfully",
+      data: promo
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const updatePromoCode = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const promo = await updatePromoCodeService(id, req.body);
+
+    res.status(200).json({
+      success: true,
+      message: "Promo code updated successfully",
+      data: promo
+    });
+  } catch (error) {
+    res.status(error.status || 500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+export const deletePromoCode = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deleted = await deletePromoCodeService(id);
+
+    res.status(200).json({
+      success: true,
+      message: "Promo code deleted successfully",
+      data: deleted
+    });
+  } catch (error) {
+    res.status(error.status || 500).json({
+      success: false,
+      message: error.message
+    });
   }
 };

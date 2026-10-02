@@ -9,6 +9,12 @@ import {
 import { updateProfileService } from '../Services/userServices/ProfileServices/profile.js';
 
 import {
+  redeemPromoCodeService,
+  revokeExpiredPromoIfNeeded,
+  PROMO_SUBSCRIPTION_MONTHS
+} from '../Services/billingServices/promoRedemptionService.js';
+
+import {
   chooseGrowthZoneService,
   getAllTopicsService,
   getSubtopicsByTopicService
@@ -202,12 +208,54 @@ export const googleLogin = async (req, res) => {
 export const home = async (req, res) => {
   try {
     const user = await getUserHomeService(req.user.id);
+
+    // Keep the client in sync with the server on promo expiry: a lapsed promo
+    // must read as "no subscription" here, otherwise the UI would keep showing
+    // premium while the paywall already rejects the user.
+    if (user) {
+      await revokeExpiredPromoIfNeeded(user);
+    }
+
     res.status(200).json({
       message: "Welcome to Home",
       user
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * Redeem a single-use promo code for the authenticated account.
+ * The account is taken from the JWT only — never from the request body.
+ */
+export const redeemPromoCode = async (req, res) => {
+  try {
+    const result = await redeemPromoCodeService({
+      userId: req.user.id,
+      code: req.body?.code
+    });
+
+    res.status(200).json({
+      success: true,
+      message: result.alreadyRedeemed
+        ? 'This promo code has already been applied to your account.'
+        : `${PROMO_SUBSCRIPTION_MONTHS} months of free premium access has been added to your account.`,
+      promo: {
+        code: result.code,
+        title: result.title,
+        months: result.months,
+        endsAt: result.endsAt,
+        alreadyRedeemed: result.alreadyRedeemed
+      }
+    });
+  } catch (error) {
+    const status = error.status || 500;
+    res.status(status).json({
+      success: false,
+      code: error.code || 'PROMO_REDEMPTION_FAILED',
+      message: error.message || 'Could not redeem this promo code.'
+    });
   }
 };
 

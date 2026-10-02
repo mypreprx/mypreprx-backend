@@ -53,6 +53,13 @@ import {
   generateStrategyBank,
   generateStudyBank,
   generateBehavioralBank,
+
+  generatePromoCode,
+  createPromoCode,
+  getAllPromoCodes,
+  getPromoCode,
+  updatePromoCode,
+  deletePromoCode,
   // getSubtopicsByTopic
 } from '../Controllers/adminController.js'
 import { VerifyUser, allowRoles } from '../Middleware/auth/authentication.js';
@@ -130,5 +137,13 @@ adminRoutes.get('/admin/GetAllQuotes', VerifyUser, allowRoles('admin'), getLates
 adminRoutes.post('/admin/strategy/generateBank', VerifyUser, allowRoles('admin'), generateStrategyBank)
 adminRoutes.post('/admin/study/generateBank', VerifyUser, allowRoles('admin'), generateStudyBank)
 adminRoutes.post('/admin/behavioral/generateBank', VerifyUser, allowRoles('admin'), generateBehavioralBank)
+
+// Promo codes — shared as a random code, a link, or a QR code.
+adminRoutes.get('/admin/promo-codes/generate', VerifyUser, allowRoles('admin'), generatePromoCode)
+adminRoutes.post('/admin/promo-codes', VerifyUser, allowRoles('admin'), createPromoCode)
+adminRoutes.get('/admin/promo-codes', VerifyUser, allowRoles('admin'), getAllPromoCodes)
+adminRoutes.get('/admin/promo-codes/:id', VerifyUser, allowRoles('admin'), getPromoCode)
+adminRoutes.put('/admin/promo-codes/:id', VerifyUser, allowRoles('admin'), updatePromoCode)
+adminRoutes.delete('/admin/promo-codes/:id', VerifyUser, allowRoles('admin'), deletePromoCode)
 
 export default adminRoutes;
