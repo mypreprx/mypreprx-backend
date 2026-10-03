@@ -43,6 +43,23 @@ export const syncSubscriptionFromStripe = async (user, stripeSubscription, { io 
   const priceId = item?.price?.id || null;
   const planId = getPlanIdByPriceId(priceId) || user.subscription?.planId || null;
 
+  // Ignore events about a subscription the user is no longer on.
+  //
+  // Stripe delivers webhooks at least once and can also deliver them out of
+  // order, so a `subscription.deleted` for an OLD subscription can arrive after
+  // the user has already bought a new one. Applying it would revoke the paid
+  // plan the user is actively paying for — they would log in and be told to
+  // subscribe again despite having a live subscription.
+  //
+  // The identity check is the subscription id itself. A newly created
+  // subscription has no id on file yet, so it is always accepted; after that,
+  // only the currently-tracked subscription may change the account.
+  const currentSubId = user.subscription?.stripeSubscriptionId || null;
+  const eventSubId = sub.id || null;
+  if (currentSubId && eventSubId && currentSubId !== eventSubId) {
+    return user;
+  }
+
   const hadPaymentFailure = Boolean(user.subscription?.graceEndsAt) || eventReason === 'payment_failed';
   const cancelAtPeriodEnd = Boolean(sub.cancel_at_period_end);
   const mapped = mapStripeStatus(sub.status, { hadPaymentFailure });
@@ -57,6 +74,10 @@ export const syncSubscriptionFromStripe = async (user, stripeSubscription, { io 
   // holds through a promo code. When Stripe reports a *live* subscription
   // (mapped.premium) it still wins, so a promo user who later buys a plan is
   // tracked normally.
+  //
+  // The expired-promo guard lives in revokeExpiredPromoIfNeeded, which only
+  // acts while status is still 'promo' — so by the time a paid plan is recorded
+  // the stale promoEndsAt can no longer revoke anything.
   if (promoHoldsEntitlement && !mapped.premium) {
     return user;
   }
