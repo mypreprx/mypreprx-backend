@@ -18,11 +18,11 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors'
 import jwt from 'jsonwebtoken';
 
-dotenv.config();
-connectDB();
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+dotenv.config({ path: path.join(__dirname, '.env') });
+connectDB();
 
 const app = express();
 const Port = process.env.PORT || 3000;
