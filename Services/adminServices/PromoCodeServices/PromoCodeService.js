@@ -8,7 +8,7 @@ const CODE_LENGTH = 8;
 const MAX_GENERATION_ATTEMPTS = 12;
 
 const clientBaseUrl = () =>
-  String(process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/+$/, '');
+  String(process.env.CLIENT_URL).replace(/\/+$/, '');
 
 export const buildPromoLink = (code) => `${clientBaseUrl()}/promo/${code}`;
 
