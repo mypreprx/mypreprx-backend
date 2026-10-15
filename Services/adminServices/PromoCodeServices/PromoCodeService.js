@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import PromoCode from '../../../Models/promoCodeSchema.js';
+import userModel from '../../../Models/userSchema.js';
 
 // Excludes I, O, 0 and 1 so a code still reads correctly when typed aloud
 // or copied off a printed poster.
@@ -132,5 +133,30 @@ export const updatePromoCodeService = async (id, data = {}) => {
 export const deletePromoCodeService = async (id) => {
   const promo = await PromoCode.findByIdAndDelete(id);
   if (!promo) throw httpError('Promo code not found', 404);
+
+  // Deleting a code must also withdraw the access it handed out, otherwise the
+  // redeemer keeps premium with no code behind it (the exact gap that left
+  // users premium after old codes were removed). Only an entitlement still
+  // owned by THIS promo is touched, so a paid plan can never be affected.
+  if (promo.redeemedBy) {
+    await userModel.updateOne(
+      {
+        _id: promo.redeemedBy,
+        'subscription.status': 'promo',
+        'subscription.promoCodeId': promo._id,
+      },
+      {
+        $set: {
+          'subscription.status': 'canceled',
+          'subscription.premium': false,
+          'subscription.cancelAtPeriodEnd': false,
+          'subscription.canceledBy': 'admin',
+          'subscription.cancelReason': 'promo_revoked_by_admin',
+          'subscription.canceledAt': new Date(),
+        },
+      }
+    );
+  }
+
   return { id: promo._id, title: promo.title, code: promo.code };
 };

@@ -168,6 +168,11 @@ export const redeemPromoCodeService = async ({ userId, code }) => {
     };
   }
 
+  // A promo that lapsed but has not yet been lazily revoked (status still
+  // 'promo') would otherwise read as "already subscribed" and wrongly block a
+  // brand-new code. Collapse that stale state first.
+  await revokeExpiredPromoIfNeeded(user);
+
   // Refuse BEFORE touching the code so an ineligible attempt leaves the code
   // redeemable by somebody else.
   if (hasAnySubscription(user) || hasActiveEntitlement(user)) {
