@@ -133,6 +133,6 @@ export const getUserHomeService = async (userID) => {
   // Never send credentials to the browser.
   const user = await userModel
     .findById(userID)
-    .select('-password -sessionToken');
+    .select('-password -sessionToken -resetPasswordToken -resetPasswordExpires');
   return user;
 };

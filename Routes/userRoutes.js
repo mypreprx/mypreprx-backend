@@ -8,6 +8,7 @@ import {
   logout,
   googleLogin,
   redeemPromoCode,
+  updateNclexExamDate,
   CreateCustomQuiz,
   choosurGrowthZone,
   submitQuiz,
@@ -199,3 +200,6 @@ userRoutes.get('/user/flashcards/get', ...premiumAuth, getFlashcards);
 userRoutes.delete('/user/flashcards/delete/:id', ...premiumAuth, removeFlashcard);
 
 export default userRoutes;
+
+userRoutes.put('/user/nclex-exam-date', ...auth, updateNclexExamDate);
+

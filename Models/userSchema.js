@@ -51,6 +51,14 @@ const userSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'NursingTipsSchema'
   }],
+  nclexExamDate: {
+    type: Date,
+    default: null
+  },
+  nclexExamDateSetAt: {
+    type: Date,
+    default: null
+  },
   sessionToken: {
     type: String,
     default: null

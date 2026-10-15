@@ -29,3 +29,27 @@ export const updateProfileService = async (userId, updateData, file) => {
     await user.save();
     return user;
 };
+
+export const updateNclexExamDateService = async (userId, nclexExamDate) => {
+    const user = await userModel.findById(userId);
+    if (!user) {
+        throw new Error("User not found");
+    }
+
+    if (nclexExamDate === null || nclexExamDate === undefined || nclexExamDate === '') {
+        user.nclexExamDate = null;
+        user.nclexExamDateSetAt = new Date();
+        await user.save();
+        return user;
+    }
+
+    const date = new Date(nclexExamDate);
+    if (isNaN(date.getTime())) {
+        throw new Error("Invalid exam date");
+    }
+
+    user.nclexExamDate = date;
+    user.nclexExamDateSetAt = new Date();
+    await user.save();
+    return user;
+};

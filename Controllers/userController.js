@@ -6,7 +6,7 @@ import {
   googleAuthService
 } from '../Services/userServices/RegisterLoginServices/registerLogin.js';
 
-import { updateProfileService } from '../Services/userServices/ProfileServices/profile.js';
+import { updateProfileService, updateNclexExamDateService } from '../Services/userServices/ProfileServices/profile.js';
 
 import {
   redeemPromoCodeService,
@@ -294,6 +294,24 @@ export const updateProfile = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+export const updateNclexExamDate = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { nclexExamDate } = req.body;
+    const updatedUser = await updateNclexExamDateService(userId, nclexExamDate);
+    res.status(200).json({
+      success: true,
+      message: "NCLEX exam date updated successfully",
+      user: updatedUser
+    });
+  } catch (error) {
+    res.status(400).json({
       success: false,
       message: error.message
     });
