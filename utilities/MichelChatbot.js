@@ -26,7 +26,7 @@ export const getMichelleResponse = async (history) => {
      console.log('the messages ',messages);
      
     const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo", // Use gpt-4o for better reasoning if budget allows
+      model: "gpt-4o-mini",
       messages: messages,
       temperature: 0.7,
     });

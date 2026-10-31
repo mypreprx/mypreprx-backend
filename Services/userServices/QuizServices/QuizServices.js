@@ -3,7 +3,6 @@ import topicModel from '../../../Models/topicSchema.js';
 import generatequiz from '../../../utilities/quizGenerator.js';
 import quizQuestionModel from '../../../Models/quizQuestion.js';
 import QuizAttemptModel from '../../../Models/quizAttempt.js';
-import { generateDailyDoseAI } from '../../../utilities/dailyDoseGenerator.js';
 import QuestionModel from '../../../Models/Question.js';
 import subtopicModel from '../../../Models/subTopicSchema.js';
 
@@ -129,94 +128,71 @@ export const createCustomQuizService = async (quizData, userId) => {
   }
 
   if (isDailyDose) {
-    // Generate dynamically using Daily Dose Prompt
-    const titlesString = titles.join(", ");
-    const aiQuestions = await generateDailyDoseAI(titlesString, difficulty, nofQuest, questionType);
+    // Serve Daily Dose questions from the seeded question bank (no AI generation)
+    const subtopics = await subtopicModel.find({ topicId: { $in: topicIds } }).lean();
 
-    const questionsForUser = aiQuestions.map(q => {
-      // Map AI options object to array
-      let optionsArray = [];
-      if (Array.isArray(q.options)) {
-          optionsArray = q.options;
-      } else if (typeof q.options === 'object' && q.options !== null) {
-          optionsArray = Object.values(q.options).filter(Boolean);
-      }
+    if (subtopics.length === 0) {
+      throw new Error("No subtopics found for the selected topics");
+    }
 
-      // Map correctAnswer
-      let exactCorrectAnswer = q.correctAnswer;
-      
-      if (typeof exactCorrectAnswer === 'string' && typeof q.options === 'object' && q.options !== null && q.options[exactCorrectAnswer]) {
-          exactCorrectAnswer = q.options[exactCorrectAnswer];
-      }
-      
-      if (Array.isArray(exactCorrectAnswer)) {
-          exactCorrectAnswer = exactCorrectAnswer.map(ans => q.options && q.options[ans] ? q.options[ans] : ans).join(', ');
-      } else if (typeof exactCorrectAnswer === 'object' && exactCorrectAnswer !== null) {
-          try {
-             // Handle cases where AI returns { A: true, B: true } or { A: 'option A', B: 'option B' }
-             const values = Object.values(exactCorrectAnswer).filter(v => v !== false && v !== '');
-             exactCorrectAnswer = values.join(', ');
-          } catch(e) {
-             exactCorrectAnswer = JSON.stringify(exactCorrectAnswer);
-          }
-      }
-      
-      if (typeof exactCorrectAnswer !== 'string') {
-          exactCorrectAnswer = String(exactCorrectAnswer);
-      }
+    const subtopicIds = subtopics.map(s => s._id);
 
-      return {
-        question: q.question,
-        option: q.option || optionsArray,
-        correctAnswer: exactCorrectAnswer || q.correctAnswer,
-        difficultyLevel: difficulty,
-        rationale: q.rationale || '',
-        whyIncorrect: q.whyIncorrect || '',
-        safetyPearl: q.safetyPearl || '',
-        memoryTrick: q.memoryTrick || '',
-        clinicalPearl: q.clinicalPearl || '',
-        nclexTrap: q.nclexTrap || '',
-        primaryFramework: q.primaryFramework || '',
-        secondaryFramework: q.secondaryFramework || '',
-        clinicalJudgmentDomain: q.clinicalJudgmentDomain || '',
-        clinicalJudgmentBreakdown: q.clinicalJudgmentBreakdown || null,
-        optionEvaluations: q.optionEvaluations || [],
-        topic: q.topic || titles[0],
-        subtopic: q.subtopic || '',
-        clientNeedsCategory: q.clientNeedsCategory || '',
-        estimatedTime: q.estimatedTime || '',
-        category: q.topic || titles[0],
-        questionType: q.questionType || questionType || 'Single Choice',
-        selectedTopic: topicIds[0]
-      };
-    });
+    let matchStage = { subTopic: { $in: subtopicIds } };
 
-    // Save to DB so they have _id for submitQuizService
-    const insertedDocs = await quizQuestionModel.insertMany(questionsForUser);
-    
-    const finalQuestions = insertedDocs.map(doc => ({
-      _id: doc._id,
-      question: doc.question,
-      option: doc.option,
-      correctAnswer: doc.correctAnswer,
-      difficultyLevel: doc.difficultyLevel,
-      questionType: doc.questionType,
-      rationale: doc.rationale,
-      whyIncorrect: doc.whyIncorrect,
-      safetyPearl: doc.safetyPearl,
-      memoryTrick: doc.memoryTrick,
-      clinicalPearl: doc.clinicalPearl,
-      nclexTrap: doc.nclexTrap,
-      primaryFramework: doc.primaryFramework,
-      secondaryFramework: doc.secondaryFramework,
-      clinicalJudgmentDomain: doc.clinicalJudgmentDomain,
-      clinicalJudgmentBreakdown: doc.clinicalJudgmentBreakdown,
-      optionEvaluations: doc.optionEvaluations,
-      topic: doc.topic,
-      subtopic: doc.subtopic,
-      clientNeedsCategory: doc.clientNeedsCategory,
-      estimatedTime: doc.estimatedTime,
-      category: doc.category
+    if (questionType && questionType !== 'All') {
+      matchStage.questionType = questionType;
+    }
+
+    const count = await QuestionModel.countDocuments(matchStage);
+    if (count === 0) {
+      throw new Error("No questions available for the selected topics. Please choose different topics.");
+    }
+
+    const sampleSize = Math.min(nofQuest, count);
+    const questions = await QuestionModel.aggregate([
+      { $match: matchStage },
+      { $sample: { size: sampleSize } },
+      { $lookup: { from: 'subtopics', localField: 'subTopic', foreignField: '_id', as: 'subtopicDoc' } },
+      { $unwind: { path: '$subtopicDoc', preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: 'topics', localField: 'subtopicDoc.topicId', foreignField: '_id', as: 'topicDoc' } },
+      { $unwind: { path: '$topicDoc', preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          _id: 1,
+          question: 1,
+          option: 1,
+          correctAnswer: 1,
+          questionType: 1,
+          rationale: 1,
+          whyIncorrect: 1,
+          memoryTrick: 1,
+          nclexTrap: 1,
+          clinicalPearl: 1,
+          optionEvaluations: 1,
+          nclexConnection: 1,
+          topic: '$topicDoc.title',
+          subtopic: '$subtopicDoc.title'
+        }
+      }
+    ]);
+
+    const finalQuestions = questions.map(q => ({
+      _id: q._id,
+      question: q.question,
+      option: q.option,
+      correctAnswer: q.correctAnswer,
+      questionType: q.questionType || 'Single Choice',
+      difficultyLevel: q.difficulty,
+      rationale: q.rationale || '',
+      whyIncorrect: q.whyIncorrect || '',
+      memoryTrick: q.memoryTrick || '',
+      nclexTrap: q.nclexTrap || '',
+      clinicalPearl: q.clinicalPearl || '',
+      optionEvaluations: q.optionEvaluations || [],
+      nclexConnection: q.nclexConnection || '',
+      topic: q.topic || titles[0],
+      subtopic: q.subtopic || '',
+      category: q.topic || titles[0]
     }));
 
     return { topicnames: titles, questions: finalQuestions };
@@ -279,9 +255,20 @@ export const createCustomQuizService = async (quizData, userId) => {
 export const submitQuizService = async (answers, userId) => {
   const questionIds = answers.map(a => a.questionId);
   const dbQuestions = await quizQuestionModel.find({ _id: { $in: questionIds } });
+
+  // Fallback: questions may also come from the seeded question bank (Daily Dose / Study Zone quizzes)
+  if (dbQuestions.length < questionIds.length) {
+    const foundIds = new Set(dbQuestions.map(q => q._id.toString()));
+    const missingIds = questionIds.filter(id => !foundIds.has(id));
+    if (missingIds.length > 0) {
+      const seededQuestions = await QuestionModel.find({ _id: { $in: missingIds } });
+      dbQuestions.push(...seededQuestions);
+    }
+  }
+
   const questionMap = new Map(dbQuestions.map(q => [q._id.toString(), q]));
 
-  const allTopicIdStrings = dbQuestions.map(q => q.selectedTopic.toString());
+  const allTopicIdStrings = dbQuestions.map(q => q.selectedTopic?.toString()).filter(Boolean);
   const distinctTopicIds = [...new Set(allTopicIdStrings)];
 
   let score = 0;
