@@ -32,10 +32,11 @@ export const getDashboardAnalyticsService = async (userId) => {
     }
   });
 
+  // Lifetime confidence/accuracy — Progress & Treatment Plan show all-time stats
   const overallProgress =
-    totalQuestions === 0
+    lifetimeTotalQuestions === 0
       ? 0
-      : Math.round((totalCorrect / totalQuestions) * 100);
+      : Math.round((lifetimeCorrectAnswers / lifetimeTotalQuestions) * 100);
 
   const averageTimePerQuestion =
     totalDurationQuestions === 0
@@ -283,8 +284,8 @@ export const getDashboardAnalyticsService = async (userId) => {
     weakAreas,
     averageTimePerQuestion,
     questionAnalytics: {
-      totalQuestions,
-      correctAnswers: totalCorrect,
+      totalQuestions: lifetimeTotalQuestions,
+      correctAnswers: lifetimeCorrectAnswers,
       lifetimeCorrectAnswers,
       accuracy: overallProgress,
       averageTimePerQuestion
