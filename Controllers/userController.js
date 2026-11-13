@@ -87,6 +87,7 @@ import {
 
 import { logDailyMood, getStreakAndHistory } from "../Services/userServices/DailyFeelingServices/DailyFeelingCheckin.js";
 import { getDashboardAnalyticsService } from "../Services/userServices/Analytics/Analytics.js"; // Make sure path is correct
+import { recordStudyActivityService } from "../Services/userServices/StudyActivity/StudyActivityService.js";
 
 import { getDailyAIAffirmationService } from "../Services/userServices/AffirmationServices/DailyAIAffirmation.js";
 
@@ -1035,6 +1036,50 @@ export const getDashboardAnalytics = async (req, res) => {
       success: false,
       message: "Failed to fetch dashboard analytics",
       error: error.message
+    });
+  }
+};
+
+/**
+ * Records that the user answered a question today (any zone).
+ * Used by client-side drills that don't hit startQuiz / NCLEX submit.
+ * Body may include isCorrect / topicId / questionId so Progress metrics update.
+ */
+export const recordStudyDay = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const source = req.body?.source || "study";
+    const hasAnswer =
+      typeof req.body?.isCorrect === "boolean" ||
+      req.body?.isCorrect === true ||
+      req.body?.isCorrect === false;
+
+    const answerResult = hasAnswer
+      ? {
+          isCorrect: Boolean(req.body.isCorrect),
+          questionId: req.body.questionId || null,
+          topicId: req.body.topicId || null,
+          topicTitle: req.body.topicTitle || null,
+          userAnswer: req.body.userAnswer || "",
+          timeSpentSeconds: req.body.timeSpentSeconds ?? null,
+        }
+      : null;
+
+    const data = await recordStudyActivityService(userId, source, answerResult);
+    return res.status(200).json({
+      success: true,
+      data: {
+        date: data.date,
+        activityCount: data.activityCount,
+        sources: data.sources,
+        recordedAnswer: Boolean(answerResult),
+      },
+    });
+  } catch (error) {
+    console.error("Record study day error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to record study day",
     });
   }
 };

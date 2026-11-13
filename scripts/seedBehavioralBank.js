@@ -122,6 +122,7 @@ let currentCase = null;
 let currentQuestion = null;
 let currentField = null; // 'SKIP' | 'questionText' | {kind:'q'|'h', key} | null
 let pastOptions = false;
+let pendingSteps = []; // "Question N - Step" headings recorded in order for the current case
 
 const finalizeQuestion = () => {
     if (!currentQuestion) return;
@@ -161,6 +162,14 @@ const finalizeCase = () => {
     if (!currentCase) return;
     finalizeQuestion();
     const c = currentCase;
+    // Question headings are recorded in source order. Attach them to the
+    // parsed items in order (their physical position can vary near page breaks).
+    c.questions.forEach((q, i) => {
+        const h = pendingSteps[i];
+        if (h) {
+            q.ncjmmStep = h.step;
+        }
+    });
     const parts = [];
     if (c.client) parts.push(`Client: ${c.client}`);
     if (c.gender) parts.push(`Gender: ${c.gender}`);
@@ -272,6 +281,7 @@ for (const line of lines) {
 
     if (cls.type === 'case') {
         finalizeCase();
+        pendingSteps = [];
         currentCase = {
             caseNumber: cls.num,
             caseTitle: cls.title,
@@ -291,16 +301,19 @@ for (const line of lines) {
     if (currentCase === null) continue; // skip doc preamble
 
     if (cls.type === 'question') {
-        finalizeQuestion();
-        currentQuestion = newQuestion(cls.step, cls.num);
-        currentField = null;
-        pastOptions = false;
+        // Question headings can appear before, after, or inside an item body in
+        // the source PDF. Record them in order; attach them to this case's items
+        // after the case has been parsed.
+        pendingSteps.push({ num: cls.num, step: cls.step });
         continue;
     }
 
     if (cls.type === 'skip') {
+        // The "Answer / Teaching Package" marker can be interleaved with the
+        // item body; ignore it entirely. Real ARV/validation blocks still switch
+        // to skip mode.
+        if (line.startsWith('Answer / Teaching Package')) continue;
         currentField = 'SKIP';
-        if (line.startsWith('Answer / Teaching Package')) pastOptions = true;
         continue;
     }
 
@@ -312,7 +325,11 @@ for (const line of lines) {
     }
 
     if (cls.type === 'option') {
-        if (currentQuestion && !pastOptions) {
+        // Only treat a lettered line as an answer option while in the item body.
+        // Teaching fields (rationale, whyIncorrect, ...) can contain lines that
+        // start with "A." / "D." as continuation text and must not overwrite options.
+        const inOptionBody = currentField === null || currentField === 'questionText';
+        if (currentQuestion && !pastOptions && inOptionBody) {
             currentQuestion.options.push(cls.text);
             currentQuestion.optionMap[cls.letter] = cls.text;
             currentField = null;
@@ -324,8 +341,23 @@ for (const line of lines) {
 
     if (cls.type === 'field') {
         if (cls.key === 'currentFormat') {
+            // "Current format:" marks the start of an item body. If the current
+            // question has already begun (some files have no explicit question
+            // heading before the body), start a fresh question.
+            const hasStarted = currentQuestion && (
+                currentQuestion.currentFormat ||
+                currentQuestion.questionText.trim() ||
+                currentQuestion.options.length > 0
+            );
+            if (!currentQuestion || hasStarted) {
+                finalizeQuestion();
+                const nextNum = (currentCase?.questions.length || 0) + 1;
+                currentQuestion = newQuestion('', nextNum);
+            }
             currentQuestion.currentFormat = cls.value;
             currentField = null;
+            // A marker may precede the item body; the body always starts here.
+            pastOptions = false;
         } else if (cls.key === 'difficulty') {
             const m = cls.value.match(/Clinical Judgment:\s*(.+)$/i);
             if (m) {
@@ -338,6 +370,10 @@ for (const line of lines) {
         } else {
             currentQuestion[cls.key] = cls.value;
             currentField = { kind: 'q', key: cls.key };
+            // Answer choices always precede the keyed answer. Switch out of option
+            // mode here so teaching text that starts with "A." is not captured as
+            // an option (the marker may be interleaved elsewhere in the item).
+            if (cls.key === 'correctAnswerLine') pastOptions = true;
         }
         continue;
     }

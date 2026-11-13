@@ -44,6 +44,7 @@ import {
   checkInMood,
   getMoodAnalytics,
   getDashboardAnalytics,
+  recordStudyDay,
   getAllPriorityPractice,
   getAllPriorityPracticeForSubTopic,
   getRandomAudioForPlayer,
@@ -179,6 +180,7 @@ userRoutes.delete('/user/affirmation/DeleteAffirmation/:affirmationId', ...premi
 userRoutes.post('/user/DailyFeeling/Check-in', ...premiumAuth, checkInMood)
 userRoutes.get('/user/DailyFeeling/Analytics/:userId', ...premiumAuth, getMoodAnalytics)
 userRoutes.get('/user/Analytics/:userId', ...premiumAuth, getDashboardAnalytics)
+userRoutes.post('/user/record-study-day', ...premiumAuth, recordStudyDay)
 
 userRoutes.get('/user/getAllBehavioralHealth', ...premiumAuth,
 getBehavioralQuestions)

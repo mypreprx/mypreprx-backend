@@ -330,6 +330,16 @@ export const submitQuizService = async (answers, userId) => {
     }
   });
 
+  // Count this day toward study streak / Progress badges
+  try {
+    const { recordStudyActivityService } = await import(
+      "../StudyActivity/StudyActivityService.js"
+    );
+    await recordStudyActivityService(userId, "quiz");
+  } catch (e) {
+    console.error("Failed to record study activity after quiz submit:", e);
+  }
+
   return {
     score,
     totalQuestions,

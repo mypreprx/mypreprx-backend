@@ -59,6 +59,16 @@ const parseDoc = () => {
         if (!current) continue;
         if (reAnswerPkg.test(line)) { pastOptions = true; field = null; continue; }
         if (!pastOptions) {
+            // Some source files place the teaching package BEFORE the
+            // "Answer / Teaching Package" marker. Detect a teaching field
+            // here so those files parse correctly too.
+            const earlyField = classifyField(line);
+            if (earlyField) {
+                pastOptions = true;
+                field = earlyField.key;
+                assign(current, earlyField);
+                continue;
+            }
             const opt = line.match(reOption);
             if (opt) { current.optionMap[opt[1]] = opt[2].trim(); current.body.push({ type: 'option', letter: opt[1], text: opt[2].trim() }); }
             else { current.body.push({ type: 'text', text: line }); }

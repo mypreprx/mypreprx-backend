@@ -47,6 +47,7 @@ const parseDoc = () => {
     let current = null;       // current question being built
     let pastOptions = false;  // in teaching mode (after Answer/Teaching Package)
     let field = null;         // active teaching field key for continuation, or 'SKIP'
+    let lastOptionLetter = null; // last option seen in body mode (for wrapped option lines)
 
     const final = (q) => {
         if (!q) return;
@@ -81,6 +82,7 @@ const parseDoc = () => {
             };
             pastOptions = false;
             field = null;
+            lastOptionLetter = null;
             continue;
         }
 
@@ -94,11 +96,32 @@ const parseDoc = () => {
         }
 
         if (!pastOptions) {
+            // Some source files place the teaching package BEFORE the
+            // "Answer / Teaching Package" marker. Detect a teaching field
+            // here so those files parse correctly too.
+            const earlyField = classifyField(line);
+            if (earlyField) {
+                pastOptions = true;
+                field = earlyField.key;
+                assign(current, earlyField);
+                continue;
+            }
             // BODY MODE: question text + options
             const opt = line.match(reOption);
             if (opt) {
+                lastOptionLetter = opt[1];
                 current.optionMap[opt[1]] = opt[2].trim();
                 current.body.push({ type: 'option', letter: opt[1], text: opt[2].trim() });
+            } else if (lastOptionLetter) {
+                // Wrapped option continuation: append to the last option instead of
+                // treating it as question-stem text.
+                current.optionMap[lastOptionLetter] += ' ' + line;
+                for (let i = current.body.length - 1; i >= 0; i--) {
+                    if (current.body[i].type === 'option' && current.body[i].letter === lastOptionLetter) {
+                        current.body[i].text += ' ' + line;
+                        break;
+                    }
+                }
             } else {
                 current.body.push({ type: 'text', text: line });
             }

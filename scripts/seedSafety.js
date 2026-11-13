@@ -94,6 +94,16 @@ const parseDoc = () => {
         }
 
         if (!pastOptions) {
+            // Some source files place the teaching package BEFORE the
+            // "Answer / Teaching Package" marker. Detect a teaching field
+            // here so those files parse correctly too.
+            const earlyField = classifyField(line);
+            if (earlyField) {
+                pastOptions = true;
+                field = earlyField.key;
+                assign(current, earlyField);
+                continue;
+            }
             // BODY MODE: question text + options
             const opt = line.match(reOption);
             if (opt) {

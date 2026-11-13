@@ -16,19 +16,25 @@ const reQuestion = /^Decoder Focus:\s*(.*)$/; // -> focus (group1)
 const rePageHeader = /^PrepRX - .*Page \d+$/i;
 const reAnswerPkg = /^Answer \/ Teaching Package - HIDDEN UNTIL SUBMISSION/i;
 const reOption = /^([A-F])\.\s+(.*)$/;
-const reARV = /^Authoritative Reference Validation/i;
+const reNoise = /^(No visible source question numbers|END OF PROMPT)\b/i;
 
 const FIELD_LABELS = [
     ['Difficulty:', 'difficulty'],
     ['Correct Answer:', 'correctAnswerLine'],
+    ['Correct Selections:', 'correctAnswerLine'],
     ['Detailed Rationale:', 'rationale'],
+    ['Rationale:', 'rationale'],
     ['Why Each Incorrect Answer Is Wrong:', 'whyIncorrect'],
+    ['Option-by-Option Rationale:', 'whyIncorrect'],
     ['Memory Trick:', 'memoryTrick'],
     ['NCLEX Trap:', 'nclexTrap'],
     ['Clinical Pearl:', 'clinicalPearl'],
     ['Clinical Pharmacology Breakdown:', 'clinicalPharmacologyBreakdown'],
     ['NCLEX Connection:', 'nclexConnection'],
-    ['PrepRX Language Decoder Strategy:', 'pedrxStrategy']
+    ['PrepRX Language Decoder Strategy:', 'pedrxStrategy'],
+    ['PrepRX Test-Taking Strategy:', 'pedrxStrategy'],
+    ['Authoritative Reference Validation:', 'authoritativeReferenceValidation'],
+    ['Number Correct:', 'numberCorrect']
 ];
 
 const classifyField = (line) => {
@@ -40,13 +46,24 @@ const classifyField = (line) => {
     return null;
 };
 
+// The bank layout is label-driven:
+//   Decoder Focus: X
+//   <stem lines>
+//   A..D
+//   Difficulty: ...
+//   Correct Answer: ...
+//   ... teaching fields ...
+//   Authoritative Reference Validation: ...
+//   (page header / "No visible..." / "Answer / Teaching Package" / next question)
+// The "Answer / Teaching Package" marker trails the teaching block and precedes
+// the next question, so it must NOT be used to switch parsing modes.
 const parseDoc = () => {
     const raw = fs.readFileSync(FILE, 'utf8');
     const lines = raw.split(/\r?\n/).map((l) => l.replace(/^\ufeff/, '').trim());
 
     const questions = [];
     let current = null;       // current question being built
-    let pastOptions = false;  // in teaching mode (after Answer/Teaching Package)
+    let mode = 'body';        // 'body' = stem/options, 'teaching' = field package
     let field = null;         // active teaching field key for continuation, or 'SKIP'
 
     const final = (q) => {
@@ -57,8 +74,10 @@ const parseDoc = () => {
     for (const line of lines) {
         // blank lines are ignored
         if (!line) continue;
-        // page headers are ignored
+        // page headers and boilerplate markers are ignored
         if (rePageHeader.test(line)) continue;
+        if (reAnswerPkg.test(line)) continue;
+        if (reNoise.test(line)) continue;
 
         // a new question starts at each "Decoder Focus:" line
         const qm = line.match(reQuestion);
@@ -79,54 +98,41 @@ const parseDoc = () => {
                 nclexConnection: '',
                 pedrxStrategy: ''
             };
-            pastOptions = false;
+            mode = 'body';
             field = null;
             continue;
         }
 
         if (!current) continue; // ignore any preamble before first question
 
-        // "Answer / Teaching Package - HIDDEN UNTIL SUBMISSION" -> switch to teaching mode
-        if (reAnswerPkg.test(line)) {
-            pastOptions = true;
-            field = null;
+        // options belong to the stem section only
+        const opt = line.match(reOption);
+        if (opt && mode === 'body') {
+            current.optionMap[opt[1]] = opt[2].trim();
+            current.body.push({ type: 'option', letter: opt[1], text: opt[2].trim() });
             continue;
         }
 
-        if (!pastOptions) {
-            // BODY MODE: question text + options
-            const opt = line.match(reOption);
-            if (opt) {
-                current.optionMap[opt[1]] = opt[2].trim();
-                current.body.push({ type: 'option', letter: opt[1], text: opt[2].trim() });
-            } else {
-                current.body.push({ type: 'text', text: line });
-            }
-            continue;
-        }
-
-        // TEACHING MODE
-        // ARV block -> skip its content
-        if (reARV.test(line)) { field = 'SKIP'; continue; }
-        if (field === 'SKIP') {
-            // reset SKIP when a real teaching field appears; otherwise keep skipping
-            const cf = classifyField(line);
-            if (cf) {
-                field = cf.key;
-                assign(current, cf);
-            }
-            continue;
-        }
-
+        // any teaching field label switches to teaching mode
         const cf = classifyField(line);
         if (cf) {
+            mode = 'teaching';
+            if (cf.key === 'authoritativeReferenceValidation' || cf.key === 'numberCorrect') {
+                // ARV is not part of the stored question schema; skip its content.
+                field = 'SKIP';
+                continue;
+            }
             field = cf.key;
             assign(current, cf);
-        } else {
-            // continuation of the active field
-            if (field && field !== 'SKIP') {
-                current[field] = (current[field] ? current[field] + ' ' : '') + line;
-            }
+            continue;
+        }
+
+        if (mode === 'body') {
+            // BODY MODE: question stem text
+            current.body.push({ type: 'text', text: line });
+        } else if (field && field !== 'SKIP') {
+            // continuation of the active teaching field
+            current[field] = (current[field] ? current[field] + ' ' : '') + line;
         }
     }
     final(current);
@@ -142,12 +148,12 @@ const assign = (q, cf) => {
     q[cf.key] = cf.value;
 };
 
-// nclex.txt writes "Correct Answer: C" (no trailing dot), so resolve any
-// letter token that is followed by a dot, comma, whitespace, or end-of-line.
+// "Correct Answer: C" (bare letter, no trailing dot). Only the LEADING key
+// letter(s) count so option text can never contribute extra answers.
 const resolveLetters = (raw) => {
     if (!raw) return [];
-    const matches = raw.match(/[A-F](?:\.|,|\s|$)/g) || [];
-    return matches.map((m) => m[0].replace(/[^A-F]/g, '')).filter(Boolean);
+    const m = String(raw).trim().match(/^([A-F](?:\s*[,/&]\s*[A-F])*)/);
+    return m ? [...new Set(m[1].match(/[A-F]/g) || [])] : [];
 };
 
 const buildQuestionDoc = (q, subTopicId) => {
@@ -205,7 +211,10 @@ const errors = [];
 for (const q of questions) {
     const text = q.body.filter((b) => b.type === 'text').map((b) => b.text).join(' ');
     if (!text.trim()) errors.push('Q: empty question text');
-    if (Object.keys(q.optionMap).length < 2) errors.push(`Q: <2 options text="${text.slice(0, 60)}"`);
+    if (/(Difficulty:|Correct Answer:|Detailed Rationale:)/.test(text)) {
+        errors.push(`Q: teaching field leaked into stem -> "${text.slice(0, 70)}"`);
+    }
+    if (Object.keys(q.optionMap).length !== 4) errors.push(`Q: option count = ${Object.keys(q.optionMap).length} text="${text.slice(0, 60)}"`);
     const letters = resolveLetters(q.correctAnswerLine || '');
     if (letters.length === 0) errors.push(`Q: no resolvable correct answer (raw="${q.correctAnswerLine}")`);
     const correctAnswers = letters.map((l) => q.optionMap[l]).filter(Boolean);

@@ -206,6 +206,21 @@ export const submitNclexAnswerService = async (attemptId, question, userAnswer, 
     attempt.state.elapsed_seconds += (elapsedSeconds || 60);
     attempt.state.total_items_answered += 1;
 
+    // Count this day + lifetime questions/accuracy for Progress
+    try {
+        const { recordStudyActivityService } = await import(
+            "../StudyActivity/StudyActivityService.js"
+        );
+        await recordStudyActivityService(attempt.userId, "nclex", {
+            isCorrect,
+            topicTitle: question?.category || question?.topic || "NCLEX",
+            userAnswer: Array.isArray(userAnswer) ? userAnswer.join(", ") : String(userAnswer ?? ""),
+            timeSpentSeconds: elapsedSeconds || 60,
+        });
+    } catch (e) {
+        console.error("Failed to record study activity after NCLEX answer:", e);
+    }
+
     // Hard enforcement of NCLEX Stopping Rules BEFORE generating next item
     const itemsAnswered = attempt.state.total_items_answered;
     const totalElapsedSeconds = attempt.state.elapsed_seconds;

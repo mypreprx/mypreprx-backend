@@ -16,6 +16,7 @@ const SUB_CATEGORY = process.env.SUB_CATEGORY || 'ABC(Airway, Breathing, Circula
 const PRIMARY_FRAMEWORK = process.env.PRIMARY_FRAMEWORK || 'ABC';
 const SECONDARY_FRAMEWORK = process.env.SECONDARY_FRAMEWORK || '';
 const LEADING_HEADER_LINES = parseInt(process.env.LEADING_HEADER_LINES || '0', 10);
+const DRY_RUN = process.argv.includes('--dry-run');
 
 const FIELD_LABELS = [
     'Correct Answer:',
@@ -70,9 +71,36 @@ const truncateAtLastTeaching = (lines) => {
         if (isFieldLabel(lines[t])) break;
         if (/^[A-Z][A-Z0-9 /&\-]{4,}$/.test(tr)) break; // all-caps section header
         if (/^(REMEDIATION|SCORING|REFERENCE|MASTER|END OF PROMPT|QUIZ ENGINE|DEVELOPER|IMPLEMENTATION)/i.test(tr)) break;
+        if (/^Authoritative Reference Framework\b/i.test(tr)) break; // trailing reference list, not question content
+        if (/Developer Prompt\s*$/i.test(tr)) break; // trailing quiz-engine spec, not question content
+        if (/Quiz Engine/i.test(tr)) break; // trailing quiz-engine spec, not question content
+        if (/Answer \/ Teaching Package/i.test(tr)) break; // stray marker between questions
         end = t;
     }
     return lines.slice(0, end + 1);
+};
+
+// Drop developer notes that some banks paste INSIDE a question's teaching block
+// (e.g. "Implementation note: ..." between Rationale and the next field). The
+// note and its wrapped continuation lines are removed; parsing resumes at the
+// next real field label / option / page break.
+const dropInsertedNotes = (lines) => {
+    const NOTE_START = /^(No visible source question numbers|Implementation note:)/i;
+    const out = [];
+    for (let i = 0; i < lines.length; i++) {
+        if (!NOTE_START.test(lines[i].trim())) { out.push(lines[i]); continue; }
+        let j = i + 1;
+        while (j < lines.length) {
+            const t = lines[j].trim();
+            if (!t) break;
+            if (isFieldLabel(lines[j]) || isOptionLine(lines[j])) break;
+            if (/Answer \/ Teaching Package/i.test(t)) break; // marker ends the note
+            if (/question bank page/i.test(t) || /^preprx\b.*\bpage\s+\d+/i.test(t)) break;
+            j++;
+        }
+        i = j - 1;
+    }
+    return out;
 };
 
 // Walk upward from an option block to find the first line of its stem.
@@ -101,6 +129,17 @@ const parseQuestions = (raw) => {
 
     // Drop page-break / running-header lines and per-question "Topic:" / "Critical Thinking Focus:" / "Priority Focus:" / "Pharm Focus:" markers.
     lines = lines.filter((l) => !/question bank page/i.test(l) && !/^preprx\b.*\bpage\s+\d+/i.test(l) && !/^topic:/i.test(l) && !/^critical thinking focus:/i.test(l) && !/^priority focus:/i.test(l) && !/^pharm focus:/i.test(l));
+
+    // Drop developer notes pasted into the middle of a teaching block.
+    // Runs BEFORE the marker strip so a note that sits directly above an
+    // "Answer / Teaching Package" marker stops there instead of swallowing
+    // the next question's stem.
+    lines = dropInsertedNotes(lines);
+
+    // Drop stray "Answer / Teaching Package" markers. Some banks place the
+    // marker immediately before the next stem after a page break, which would
+    // otherwise be captured as part of that stem.
+    lines = lines.filter((l) => !/Answer \/ Teaching Package/i.test(l));
 
     // Drop any trailing developer spec after the last question.
     lines = truncateAtLastTeaching(lines);
@@ -151,10 +190,29 @@ const parseQuestions = (raw) => {
         const stemLines = lines.slice(stemStart, block.start).filter((l) => l.trim());
         const stem = stemLines.join(' ').trim();
 
+        // The per-question "Difficulty:" header sits immediately above the stem in
+        // these banks. Capture it for THIS question (the generic teach-block scan
+        // would otherwise pick up the NEXT question's difficulty).
+        let ownDifficulty = '';
+        for (let t = stemStart - 1; t >= 0; t--) {
+            const tr = lines[t].trim();
+            if (!tr) continue;
+            if (/^Difficulty:/.test(tr)) ownDifficulty = tr.slice('Difficulty:'.length).trim();
+            break;
+        }
+
         // Teaching = from after options up to the next question's stem start (or EOF,
         // which truncateAtLastTeaching has already trimmed to the last field value).
         const teachStart = block.end + 1;
-        const teachEnd = nextBlock ? findStemStart(lines, nextBlock.start) : lines.length;
+        const nextStemStart = nextBlock ? findStemStart(lines, nextBlock.start) : lines.length;
+        let teachEnd = nextStemStart;
+        // Exclude the next question's own "Difficulty:" header from this package.
+        for (let t = nextStemStart - 1; t >= teachStart; t--) {
+            const tr = lines[t].trim();
+            if (!tr) continue;
+            if (/^Difficulty:/.test(tr)) teachEnd = t;
+            break;
+        }
         let teachLines = lines.slice(teachStart, teachEnd);
         teachLines = teachLines.filter((l) => !l.includes('Answer / Teaching Package'));
 
@@ -194,9 +252,14 @@ const parseQuestions = (raw) => {
         const options = block.opts.map((o) => o.text);
 
         // Correct answer(s): supports single ("B", "B. text") or SATA multi
-        // ("Correct Selections: A, B, C, D"). Map every letter to its option text.
+        // ("Correct Selections: A, B, C, D"). Only the LEADING key letters count —
+        // scanning the whole line wrongly picks letters out of the option text
+        // (e.g. "A. Assess..." => A plus the key letter).
         const ca = (fields.correctAnswerLine || '').trim();
-        const caLetters = (ca.match(/[A-F]/g) || []).filter((v, i, a) => a.indexOf(v) === i);
+        const keyMatch = ca.match(/^([A-F](?:\s*[,/&]\s*[A-F])*)/);
+        const caLetters = keyMatch
+            ? [...new Set(keyMatch[1].match(/[A-F]/g) || [])]
+            : [];
         const correctTexts = [];
         for (const letter of caLetters) {
             const opt = block.opts.find((o) => o.letter === letter);
@@ -216,7 +279,7 @@ const parseQuestions = (raw) => {
             question: stem,
             options,
             correctAnswers: correctTexts,
-            difficultyLevel: normalizeDifficulty(fields['Difficulty:']),
+            difficultyLevel: normalizeDifficulty(ownDifficulty || fields['Difficulty:']),
             rationale: fields['Rationale:'] || '',
             whyIncorrect,
             memoryTrick: fields['Memory Trick:'] || '',
@@ -225,6 +288,7 @@ const parseQuestions = (raw) => {
             clinicalPharmacologyBreakdown: fields['Clinical Pharmacology Breakdown:'] || '',
             nclexConnection: fields['NCLEX Connection:'] || '',
             preprxTestTakingStrategy: fields['PrepRX Test-Taking Strategy:'] || '',
+            authoritativeReferenceValidation: fields['Authoritative Reference Validation:'] || '',
             primaryFramework: PRIMARY_FRAMEWORK,
             secondaryFramework: SECONDARY_FRAMEWORK
         });
@@ -262,6 +326,26 @@ const main = async () => {
         console.error('VALIDATION ERRORS (first 25):');
         errors.slice(0, 25).forEach((e) => console.error(' - ' + e));
         process.exit(1);
+    }
+
+    if (DRY_RUN) {
+        const dist = {};
+        questions.forEach((q) => { dist[q.difficultyLevel] = (dist[q.difficultyLevel] || 0) + 1; });
+        console.log('\nDifficulty distribution:', dist);
+        console.log('\nFirst 3 question stems:');
+        questions.slice(0, 3).forEach((q, i) => console.log(`  [${i + 1}] ${q.question}`));
+        const sample = questions[0];
+        console.log('\nSample question:');
+        console.log('  Q:', sample.question);
+        console.log('  Options:', sample.options);
+        console.log('  Correct:', sample.correctAnswers);
+        console.log('  difficultyLevel:', sample.difficultyLevel);
+        console.log('  clinicalPearl:', sample.clinicalPearl.slice(0, 80));
+        console.log('  authoritativeReferenceValidation:', sample.authoritativeReferenceValidation.slice(0, 80));
+        const last = questions[questions.length - 1];
+        console.log('\nLast question ARV (tail guard check):', last.authoritativeReferenceValidation.slice(0, 120));
+        console.log('\nDRY-RUN: no database changes made.');
+        return;
     }
 
     const mongodbUrl =

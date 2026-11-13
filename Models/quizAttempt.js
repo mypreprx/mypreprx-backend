@@ -27,6 +27,11 @@ const quizAttemptSchema = new mongoose.Schema({
         type: Number, // Useful for quick analytics (e.g., "You got 80%!")
         required: true
     },
+    // Seconds spent on this attempt (sum for multi-Q; per-question for drill logs)
+    durationSeconds: {
+        type: Number,
+        default: null,
+    },
    details: [{
              questionId: { type: mongoose.Schema.Types.ObjectId, ref: 'quizQuestion' },
              userAnswer: String,

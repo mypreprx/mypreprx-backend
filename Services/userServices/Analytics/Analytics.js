@@ -3,6 +3,10 @@ import QuizAttempt from "../../../Models/quizAttempt.js";
 import MoodTracker from "../../../Models/DailyFeelingSchema.js";
 import Topic from "../../../Models/topicSchema.js";
 import userModel from "../../../Models/userSchema.js";
+import {
+  getStudyActivityDatesService,
+  computeStreakFromDates,
+} from "../StudyActivity/StudyActivityService.js";
 
 export const getDashboardAnalyticsService = async (userId) => {
 
@@ -25,7 +29,11 @@ export const getDashboardAnalyticsService = async (userId) => {
     totalQuestions += a.totalQuestions;
     totalCorrect += a.score;
 
-    if (a.createdAt && a.updatedAt && a.updatedAt > a.createdAt) {
+    // Prefer explicit duration (drills / NCLEX). Fall back to session length for older quizzes.
+    if (typeof a.durationSeconds === "number" && a.durationSeconds > 0) {
+      totalDurationSeconds += a.durationSeconds;
+      totalDurationQuestions += a.totalQuestions || 1;
+    } else if (a.createdAt && a.updatedAt && a.updatedAt > a.createdAt) {
       const durationSeconds = (a.updatedAt.getTime() - a.createdAt.getTime()) / 1000;
       totalDurationSeconds += durationSeconds;
       totalDurationQuestions += a.totalQuestions;
@@ -231,44 +239,11 @@ export const getDashboardAnalyticsService = async (userId) => {
   }));
 
 
-  /* ---------------- 5. STUDY STREAK (Login Based) ---------------- */
-
-  const moodDates = await MoodTracker.aggregate([
-    { $match: { userId : userObjectId} },
-    {
-      $project: {
-        dateStr: { $cond: {
-                if: { $eq: [{ $type: "$date" }, "string"] },
-                then: "$date", // If it's already a string "2026-02-04", keep it
-                else: { $dateToString: { format: "%Y-%m-%d", date: "$date" } } // If it's a Date object, convert it
-             } }
-      }
-    },
-    { $group: { _id: "$dateStr" } },
-    { $sort: { _id: -1 } }
-  ]);
-
-  const uniqueDates = moodDates.map(d => d._id);
-
-  let streak = 0;
-  const now = new Date();
-  const todayStr = now.toISOString().split('T')[0];
-  const yest = new Date(now);
-  yest.setDate(yest.getDate() - 1);
-  const yesterdayStr = yest.toISOString().split('T')[0];
-
-  if (uniqueDates.length > 0 && (uniqueDates[0] === todayStr || uniqueDates[0] === yesterdayStr)) {
-    streak = 1;
-    for (let i = 0; i < uniqueDates.length - 1; i++) {
-      const current = new Date(uniqueDates[i]);
-      const previous = new Date(uniqueDates[i+1]);
-      const diffTime = Math.abs(current - previous);
-      const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
-
-      if (diffDays === 1) streak++;
-      else break;
-    }
-  }
+  /* ---------------- 5. STUDY STREAK (question activity days) ---------------- */
+  // Consecutive UTC days the user answered questions (Study Zone, Strategy Zone,
+  // NCLEX, priority practice, etc.) — NOT mood check-ins.
+  const uniqueDates = await getStudyActivityDatesService(userId);
+  const streak = computeStreakFromDates(uniqueDates);
 
 
   /* ---------------- FINAL RESPONSE (Matched to your list) ---------------- */
