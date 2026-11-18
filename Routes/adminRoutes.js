@@ -6,6 +6,7 @@ import {
   dashboard,
 
   getAllUsers,
+  deleteUsers,
   getAnalytics,
 
   genrateTopics,
@@ -70,6 +71,7 @@ adminRoutes.post('/admin/login', loginAdmin)
 adminRoutes.get('/admin/dashboard', VerifyUser, allowRoles('admin'), dashboard)
 adminRoutes.get('/admin/logout', VerifyUser, logoutAdmin)
 adminRoutes.get('/admin/users', VerifyUser, allowRoles('admin'), getAllUsers)
+adminRoutes.delete('/admin/users', VerifyUser, allowRoles('admin'), deleteUsers)
 adminRoutes.get('/admin/analytics', VerifyUser, allowRoles('admin'), getAnalytics)
 
 

@@ -2,7 +2,8 @@ import {
   loginAdminService,
   logoutAdminService,
   getAdminDashboardService,
-  getAllUsersService
+  getAllUsersService,
+  deleteUsersService
 } from '../Services/adminServices/RegisterLoginServices/registerLogin.js';
 
 import {
@@ -179,6 +180,24 @@ export const getAllUsers = async (req, res) => {
       success: false,
       message: "Error fetching users",
       error: error.message
+    });
+  }
+};
+
+// Hard-deletes the selected accounts. Permanent — no soft delete, no restore.
+export const deleteUsers = async (req, res) => {
+  try {
+    const { userIds } = req.body || {};
+    const result = await deleteUsersService(userIds);
+    res.status(200).json({
+      success: true,
+      message: `${result.deletedCount} user${result.deletedCount === 1 ? '' : 's'} deleted permanently`,
+      data: result
+    });
+  } catch (error) {
+    res.status(error.status || 500).json({
+      success: false,
+      message: error.message || "Error deleting users"
     });
   }
 };
