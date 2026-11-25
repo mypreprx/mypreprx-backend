@@ -143,6 +143,11 @@ const mapBankDocToResponse = (d) => ({
     secondaryFramework: d.secondaryFramework
 });
 
+// Number of seeded questions for a bank. Used to decide whether a request must
+// be served from the database instead of falling through to AI generation.
+export const getStrategyBankCount = (subCategory) =>
+    StrategyQuestionModel.countDocuments({ subCategory });
+
 export const getStrategyBankQuestions = async (subCategory, batchSize = 5) => {
     const key = subCategory;
     if (!decks[key] || decks[key].deck.length === 0 || decks[key].pointer >= decks[key].deck.length) {

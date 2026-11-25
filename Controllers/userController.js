@@ -30,7 +30,7 @@ import {
 } from '../Services/userServices/QuizServices/nclexServices.js';
 
 import { getQuestionsBySubtopicService, getAllQuestionsByTopicService } from '../Services/userServices/QuizServices/QuestionServices.js';
-import { getStrategyQuestionsService, generateStrategyBatch, getAbcBankQuestions, getStrategyBankQuestions } from '../Services/adminServices/StrategyServices/StrategyServices.js';
+import { getStrategyQuestionsService, generateStrategyBatch, getAbcBankQuestions, getStrategyBankQuestions, getStrategyBankCount } from '../Services/adminServices/StrategyServices/StrategyServices.js';
 
 import {
   getAllCrashCoursesService,
@@ -1340,9 +1340,13 @@ export const generateDynamicStrategyDrill = async (req, res) => {
         
         const batchSize = count || 5;
 
-        // Fixed, clinically validated banks (no AI generation) for selected Priority Framework topics.
-        if (subCategory === 'ABC(Airway, Breathing, Circulation)' || subCategory === 'Maslow’s Hierarchy' || subCategory === 'ADPIE Nursing Process' || subCategory === 'Saftey First' || subCategory === 'Elimination Techniques' || subCategory === 'SATA Boot Camp' || subCategory === 'Critical Thinking Drills' || subCategory === 'Priority Patients' || subCategory === 'Pharm Shortcuts') {
-            const questions = await getStrategyBankQuestions(subCategory, batchSize);
+        // Any subcategory that has seeded questions in the database must be served
+        // from those questions. Only truly dynamic topics with no seeded bank are
+        // allowed to fall through to AI generation.
+        const bankKey = subCategory || strategyTab;
+        const bankCount = await getStrategyBankCount(bankKey);
+        if (bankCount > 0) {
+            const questions = await getStrategyBankQuestions(bankKey, batchSize);
             return res.status(200).json({ success: true, data: questions });
         }
 

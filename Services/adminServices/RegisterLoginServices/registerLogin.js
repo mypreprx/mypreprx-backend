@@ -58,6 +58,7 @@ export const getAdminDashboardService = async (adminId) => {
 export const getAllUsersService = async () => {
   // Never expose credentials to the admin browser:
   // - password      : bcrypt hash
+  // - sessionToken  : the live bearer credential checked by VerifyUser
   // - stripeCustomerId : internal Stripe identifier the admin UI never renders
   const users = await userModel
     .find()
