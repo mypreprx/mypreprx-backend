@@ -174,30 +174,32 @@ export const getStrategyBankQuestions = async (subCategory, batchSize = 5) => {
 export const getAbcBankQuestions = (batchSize = 5) =>
     getStrategyBankQuestions('ABC(Airway, Breathing, Circulation)', batchSize);
 
-export const getStrategyQuestionsService = async (strategyTab, limit, userId) => {
-    // For the frontend to fetch questions
-    // Track which questions the user has already seen
+export const getStrategyQuestionsService = async (strategyTab, limit, userId, subCategory = null) => {
+    // Load seeded strategy-bank questions from the database (never AI).
     const userDoc = await userModel.findById(userId);
     const attempted = userDoc.attemptedQuestions || [];
+    const sampleSize = Math.min(Math.max(parseInt(limit, 10) || 15, 1), 100);
+
+    const baseMatch = { strategyTab };
+    if (subCategory) baseMatch.subCategory = subCategory;
 
     let questions = await StrategyQuestionModel.aggregate([
-        { $match: { strategyTab, _id: { $nin: attempted } } },
-        { $sample: { size: parseInt(limit) || 10 } }
+        { $match: { ...baseMatch, _id: { $nin: attempted } } },
+        { $sample: { size: sampleSize } },
     ]);
 
     if (questions.length === 0) {
-        // Fallback if all are attempted
+        // Fallback if all are attempted — reshuffle from the bank
         questions = await StrategyQuestionModel.aggregate([
-            { $match: { strategyTab } },
-            { $sample: { size: parseInt(limit) || 10 } }
+            { $match: baseMatch },
+            { $sample: { size: sampleSize } },
         ]);
     }
 
     if (questions.length > 0) {
-        // Mark as attempted
-        const questionIds = questions.map(q => q._id);
+        const questionIds = questions.map((q) => q._id);
         await userModel.findByIdAndUpdate(userId, {
-            $addToSet: { attemptedQuestions: { $each: questionIds } }
+            $addToSet: { attemptedQuestions: { $each: questionIds } },
         });
     }
 

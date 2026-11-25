@@ -347,8 +347,13 @@ export const choosurGrowthZone = async (req, res) => {
 
 export const getStrategyQuestions = async (req, res) => {
   try {
-    const { strategyTab, limit } = req.query;
-    const questions = await getStrategyQuestionsService(strategyTab, limit, req.user.id);
+    const { strategyTab, limit, subCategory } = req.query;
+    const questions = await getStrategyQuestionsService(
+      strategyTab,
+      limit,
+      req.user.id,
+      subCategory || null
+    );
 
     res.status(200).json({
       success: true,
